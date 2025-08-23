@@ -1,0 +1,21 @@
+sudo ip link set can0 type can bitrate 1000000
+sudo ip link set can0 up
+sudo ip link set can0 down
+cansend can0 123#1122334455667788
+
+vcgencmd measure_temp
+vcgencmd measure_volts
+
+
+g++ -o motorTest motor.cpp motorTest.cpp -lgpiod
+
+
+//查看公钥
+cat ~/.ssh/id_rsa.pub
+github公钥：ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDKiOx4idAYRVpd69feEXuaOW/cK6y8RkFxlc14IPsm03geNL1Fzw8qAMsks3uMz3hiufv8kxw6vtN8sF+kivmoGuVIz+jZIeDtbuUGggp6NxizXslemr3bZEMCrQQGLi4B1dMtO2X/4zdW7k4eiLWpWguhlvbDwl/lf4DW+G3Wtwdqi+vSJLpQZAOHwmTzS021jyChz06ASZX2N480Ua0J077PWPiQERC+7HMorizlRAAdYjJ8/MOq7unTEN7IHG4NTkP5olLZ6j4DyhBZwGa6v1ICBTAz+04wVJnOvq5TfvSEg7NN4c6ERMzXA3YHWJBc6ZFySbhsDIxfQ1RicgkEp6vjm617WN+DhThpiVxupPgHJU1oRHylTYKIsg765/W2OgBvXyQpgCjR55aYH8mBmKDMcXEdCsSi4PflB7M0hvLmdvREwl5fINtpa7M6U7JNxaZr1MeX6Kh5aXMYLbw3kWo8IocWDmaLUyXRezmSRIPfn9W7SCITAEC2rSlw1YJI3HqCp3VHwqS7OPku6Tn/3p671QYGHU9bgR5iQcGYN1KXtOnAPH33e5zRYsz+yzOSCmmohF1rjIXoWbWg0UB/GcDEo8Q+C1vt/TEDAYUQoVfxESMaHmF4M4K/5EVaaQkoD77eaEj3f1m13QpgtgE+857d4Mg9nm0PhjkgTuwUww== 1054247089@qq.com
+//将项目中的文件添加到 Git 仓库
+git add .
+//提交文件到本地 Git 仓库
+git commit -m "Initial commit"
+//使用 SSH 将代码推送到 GitHub
+git push -u origin master
