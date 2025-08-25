@@ -16,7 +16,7 @@
 #include <chrono>
 #include <thread>
 
-#include "motor.h"
+#include "gripmachine.h"
 
 #define com "sudo ip link set can0 type can bitrate 1000000"
 #define up "sudo ifconfig can0 up"

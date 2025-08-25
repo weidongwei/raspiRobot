@@ -264,13 +264,13 @@ bool sendSDO(unsigned int funID, unsigned int mIdx, int para) {
 
 //发PDO1帧
 int sendPDO1(unsigned int mIdx, int para) {
-#pragma pack (1)
-struct PDO1DATA{
-    short ctrlWord;
-    char workMode;
-    int objPos;
-}frameData;
-#pragma pack ()
+    #pragma pack (1)
+    struct PDO1DATA{
+        short ctrlWord;
+        char workMode;
+        int objPos;
+    }frameData;
+    #pragma pack ()
 
     sframe.can_id = 0x200 + mIdx;
     sframe.can_dlc = 7;
@@ -292,12 +292,12 @@ struct PDO1DATA{
 }
 
 
-//发PDO2帧
+//发PDO2帧(绝对值位置模式)
 int sendPDO2(unsigned int mIdx, int objPos, int tSpeed) {
-struct PDO2DATA{
-    int objPos;
-    int tSpeed;
-}frameData;
+    struct PDO2DATA{
+        int objPos;
+        int tSpeed;
+    }frameData;
     sframe.can_id = 0x300 + mIdx;
     sframe.can_dlc = 8;
 
@@ -316,7 +316,7 @@ struct PDO2DATA{
     return true;
 }
 
-//发PDO4帧
+//发PDO4帧(位置插补模式)
 int sendPDO4(unsigned int mIdx, int objPos) {
     sframe.can_id = 0x500 + mIdx;
     sframe.can_dlc = 4;
@@ -324,7 +324,7 @@ int sendPDO4(unsigned int mIdx, int objPos) {
     memcpy(sframe.data, &objPos, sizeof(int));
     printf("电机%d发送PDO4=0x%x(%d)......",mIdx, objPos, objPos);
     writeCANframe();
-/*    while(1) {
+    /*while(1) {
         if(machine.recCanID==0x480 + mIdx) {
             printf("成功\n");
             break;

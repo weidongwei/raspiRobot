@@ -7,7 +7,7 @@
 #include <sys/time.h>
 
 #include "thread.h"
-#include "motor.h"
+#include "gripmachine.h"
 #include "ImgProc.h"
 #include "main.h"
 

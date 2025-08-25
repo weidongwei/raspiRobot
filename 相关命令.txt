@@ -7,7 +7,7 @@ vcgencmd measure_temp
 vcgencmd measure_volts
 
 
-g++ -o motorTest motor.cpp motorTest.cpp -lgpiod
+g++ -o motorTest gripmachine.cpp motorTest.cpp -lgpiod
 
 
 //查看公钥

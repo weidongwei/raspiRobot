@@ -4,7 +4,7 @@
 #include "thread.h"
 #include "ImgProc.h"
 #include "main.h"
-#include "motor.h"
+#include "gripmachine.h"
 //线程是否终止循环
 bool beginExit = false;
 

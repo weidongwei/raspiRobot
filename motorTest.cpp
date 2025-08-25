@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "motor.h"
+#include "gripmachine.h"
 
 
 #define MOTOR1 1

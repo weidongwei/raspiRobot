@@ -1,5 +1,5 @@
-#ifndef MOTOR_H
-#define MOTOR_H
+#ifndef GRIPMACHINE_H
+#define GRIPMACHINE_H
 
 
 #include <linux/can.h>
@@ -37,4 +37,4 @@ int u_pickup();
 int u_sync_go(float angle);
 int run_laser(bool isOpen);
 
-#endif // MOTOR_H
+#endif // GRIPMACHINE_H

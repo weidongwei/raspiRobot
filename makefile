@@ -1,15 +1,15 @@
-#motor: main.cpp motor.cpp thread.cpp ImgProc.cpp
-#	g++ -o motor main.cpp motor.cpp thread.cpp ImgProc.cpp `pkg-config --cflags --libs opencv4`
-#	g++ -o motor main.cpp motor.cpp -I/usr/include/opencv4 -L/usr/local/lib -lopencv_core -lopencv_imgcodecs -lopencv_highgui -lopencv_videoio -lopencv_imgproc
+#motor: main.cpp gripmachine.cpp thread.cpp ImgProc.cpp
+#	g++ -o motor main.cpp gripmachine.cpp thread.cpp ImgProc.cpp `pkg-config --cflags --libs opencv4`
+#	g++ -o motor main.cpp gripmachine.cpp -I/usr/include/opencv4 -L/usr/local/lib -lopencv_core -lopencv_imgcodecs -lopencv_highgui -lopencv_videoio -lopencv_imgproc
 
 
-#g++ -o motorTest motor.cpp motorTest.cpp
+#g++ -o motorTest gripmachine.cpp motorTest.cpp
 
 CXX = g++
 CXXFLAGS = -O2 -Wall `pkg-config --cflags opencv4`
 LDFLAGS = `pkg-config --libs opencv4` -lgpiod
 
-SRCS = main.cpp motor.cpp thread.cpp ImgProc.cpp
+SRCS = main.cpp gripmachine.cpp thread.cpp ImgProc.cpp
 OBJS = $(SRCS:.cpp=.o)
 TARGET = motor
 
