@@ -107,7 +107,7 @@ void MOTOR::setMotorWorkCondition() {
     initDone = true;
 }
 
-//设置电机要到达的位置,如果工作模式为1(单机运动)发送PDO1,工作模式为4(插值运动)发送PDO4
+//设置电机要到达的位置并发送pdo,如果工作模式为1(单机运动)发送PDO1,工作模式为4(插值运动)发送PDO4
 void MOTOR::setTarDecode(int newPos, int moveMode) {
     tarDecode = newPos;
     
@@ -170,6 +170,7 @@ int MOTOR::q2decode(double inq) {
 
 
 //-------------------MACHINE----------------------
+//设置PDO模式
 void MACHINE::setPDOMode(int inMode) {
     /*if (inMode==1 && nowPDOMode != 1) {
         forAllMotor(mIdx) 
@@ -182,8 +183,7 @@ void MACHINE::setPDOMode(int inMode) {
     nowPDOMode = inMode;
 }
 
-
-
+//读取JSON文件中机器人系统的参数并初始化
 int MACHINE::readPara() {
     // 打开JSON文件
     FILE *file = fopen("robot.json", "r");
@@ -256,6 +256,7 @@ int MACHINE::readPara() {
     return 1;
 }
 
+//电机是否到达目标且完全静止
 bool MACHINE::checkAllReached() {
     prevAllPosReached = allPosReached;
     allPosReached = false;
@@ -273,7 +274,7 @@ bool MACHINE::checkAllReached() {
     return true;
 }
 
-
+//电机求正解,求出终端当前x, y, z, a(角度)并存放到tPoint[0]
 void MACHINE::forwardSolve() {
     static double tmpx, tmpy, sumTheta;
     forAllMotor(mIdx) motor[mIdx].decode2q(); //当前编码器位置转化为q(弧度)
@@ -305,6 +306,7 @@ void MACHINE::forwardSolve() {
 
 }
 
+//电机求逆解,求出每个电机需要转动的角度q和编码器读数decodeVal
 int MACHINE::inverseSolve(int tIdx) {
     static double xw, yw, Lw;    //腕关节坐标， 长度
     static double thetaLw, angL1Lw, angL1L2;
@@ -326,6 +328,7 @@ int MACHINE::inverseSolve(int tIdx) {
     thetaLw = acos(xw/Lw);   //返回值0-pi
     if(yw<0) thetaLw *= -1;
 
+    //求解L1和LW的夹角angL1Lw
     tmpF = (L1*L1 + Lw*Lw - L2*L2)/2/L1/Lw;
     if(tmpF>1 || tmpF<-1) {/*printf("---无解---\n");*/ return -2;}
     angL1Lw = acos(tmpF);  //返回值0-pi
@@ -338,10 +341,12 @@ int MACHINE::inverseSolve(int tIdx) {
     tmpDalt = qDN - tPoint[tIdx-1].qArray[0];
     daltDN = tmpDalt * tmpDalt;
 
+    //求解L1和L2的夹角angL1L2
     tmpF = (L1*L1 + L2*L2 - Lw*Lw)/2.0/L1/L2;
     if(tmpF>1 || tmpF<-1) {/*printf("---无解---\n"); */return -2;}
     angL1L2 = acos(tmpF);  //返回值0-pi
 
+    //两个解中选择一个
     int selectSolution = tPoint[tIdx].forceSolution;
     if(selectSolution==0) {
         if(daltUP<=daltDN) selectSolution = 1;
@@ -358,6 +363,7 @@ int MACHINE::inverseSolve(int tIdx) {
     }
     else printf("wrong selectSolution\n");
 
+    //
     tPoint[tIdx].qArray[1] = z/motor[1].screwPitch*pi*2;
     tPoint[tIdx].qArray[3] = - (tPoint[tIdx].qArray[0] +
          tPoint[tIdx].qArray[2]) + Ax;
@@ -390,7 +396,7 @@ int MACHINE::inverseSolve(int tIdx) {
     return 0;
 }
 
-
+//线性插补(按照直线路径，分成若干小步,计算每个点并存入轨迹点数组tPoint[]中)
 bool MACHINE::addTpointLinear(double *xyza, int stepmm, int userForceSolution) {
     static double x0, y0, z0, daltx, dalty, daltz, L;
     x0 = tPoint[tPointCount].xyza[0];
@@ -401,6 +407,7 @@ bool MACHINE::addTpointLinear(double *xyza, int stepmm, int userForceSolution) {
     daltz= (xyza[2] - z0);
     L = sqrt(daltx*daltx + dalty*dalty + daltz*daltz);
 
+    //根据比例插值计算出当前轨迹点的xyz
     for(int i=1; i<int(L)+1; i+=stepmm) {
         tPointCount++;
         if(i<int(L)) {
@@ -429,6 +436,7 @@ bool MACHINE::addTpointLinear(double *xyza, int stepmm, int userForceSolution) {
     return true;
 }
 
+//不插补中间点,直接加一个想要到达的点保存到tPoint[]中
 bool MACHINE::addTpointFree(double *xyza, int userForceSolution) {
     printf("添加pdo1目标：");
     tPointCount++;
@@ -443,6 +451,7 @@ bool MACHINE::addTpointFree(double *xyza, int userForceSolution) {
     return true;
 }
 
+//按顺序发送tPoint[]中的每个轨迹点给电机(插补模式,逐点到位模式)
 int MACHINE::doTrace() {
     static int tpMode;
     static long elapseUS;
