@@ -74,7 +74,7 @@ void changeFuncTab() {
     }
 }
 
-//初始化CAN总线的发送和接收Socket,绑定到can0设备
+//初始化CAN总线的发送和接收Socket,绑定到can0设备,再运行changeFuncTab函数
 void initCanSocket() {
     struct sockaddr_can addr_send, addr_recv;
     struct ifreq ifr_send, ifr_recv;
@@ -249,7 +249,7 @@ bool sendSDO(unsigned int funID, unsigned int mIdx, int para) {
         if(machine.recCanID!=prevCANID) {
             prevCANID = machine.recCanID; recCount++; }
             
-        if(machine.recCanID==0x580 + mIdx &&  machine.recFunID==funID) {
+        if((unsigned int)machine.recCanID==0x580 + mIdx &&  (unsigned int)machine.recFunID==funID) {
             machine.recCanID = 0;
             machine.recFunID = -1;
             break;
@@ -282,7 +282,7 @@ int sendPDO1(unsigned int mIdx, int para) {
     printf("电机%d发送PDO1=0x%x(%d)......",mIdx, para, para);
     writeCANframe();
     while(1) {
-        if(machine.recCanID==0x180 + mIdx) {
+        if((unsigned int)machine.recCanID==0x180 + mIdx) {
             printf("成功\n");
             break;
         }
@@ -308,7 +308,7 @@ int sendPDO2(unsigned int mIdx, int objPos, int tSpeed) {
     printf("电机%d发送PDO2=0x%x(%d)  =0x%x(%d)......",mIdx, objPos, objPos, tSpeed, tSpeed);
     writeCANframe();
     while(1) {
-        if(machine.recCanID==0x280 + mIdx) {
+        if((unsigned int)machine.recCanID==0x280 + mIdx) {
             printf("成功\n");
             break;
         }

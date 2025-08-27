@@ -7,9 +7,9 @@
 
 CXX = g++
 CXXFLAGS = -O2 -Wall `pkg-config --cflags opencv4`
-LDFLAGS = `pkg-config --libs opencv4` -lgpiod
+LDFLAGS = `pkg-config --libs opencv4` -lgpiod -lcjson
 
-SRCS = main.cpp gripmachine.cpp thread.cpp ImgProc.cpp
+SRCS = main.cpp gripmachine.cpp thread.cpp ImgProc.cpp cancommunicate.cpp machine.cpp
 OBJS = $(SRCS:.cpp=.o)
 TARGET = motor
 

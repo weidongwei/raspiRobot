@@ -107,7 +107,7 @@ void MOTOR::setMotorWorkCondition() {
     initDone = true;
 }
 
-//设置电机要到达的位置并发送pdo,如果工作模式为1(单机运动)发送PDO1,工作模式为4(插值运动)发送PDO4
+//设置电机要到达的位置并发送pdo帧,如果工作模式为1(单机运动)发送PDO1,工作模式为4(插值运动)发送PDO4
 void MOTOR::setTarDecode(int newPos, int moveMode) {
     tarDecode = newPos;
     
@@ -183,7 +183,7 @@ void MACHINE::setPDOMode(int inMode) {
     nowPDOMode = inMode;
 }
 
-//读取JSON文件中机器人系统的参数并初始化
+//读取JSON文件中机器人系统的参数并初始化，调用motor的setPara
 int MACHINE::readPara() {
     // 打开JSON文件
     FILE *file = fopen("robot.json", "r");
@@ -363,12 +363,12 @@ int MACHINE::inverseSolve(int tIdx) {
     }
     else printf("wrong selectSolution\n");
 
-    //
     tPoint[tIdx].qArray[1] = z/motor[1].screwPitch*pi*2;
     tPoint[tIdx].qArray[3] = - (tPoint[tIdx].qArray[0] +
          tPoint[tIdx].qArray[2]) + Ax;
     tPoint[tIdx].qArray[4] = Az;
 
+    //将算好的解转换成编码器读数存到tPoint的decodeVal中
     forAllMotor(mIdx) {
         tPoint[tIdx].decodeVal[mIdx] = motor[mIdx].q2decode(tPoint[tIdx].qArray[mIdx]);
     }

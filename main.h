@@ -25,6 +25,8 @@ public:
 extern cv::VideoCapture cam;
 extern IMGQUEUE imgQueue;
 extern long int globalUS;
+extern int camNum;
+extern int imgWidth, imgHeight;
 long int getGlobalUS();
 
 #endif // MAIN_H

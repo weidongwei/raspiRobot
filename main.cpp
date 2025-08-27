@@ -10,6 +10,8 @@
 #include "gripmachine.h"
 #include "ImgProc.h"
 #include "main.h"
+#include "machine.h"
+#include "cancommunicate.h"
 
 #define MOTOR1 1
 #define MOTOR2 2
@@ -28,10 +30,60 @@ cv::VideoCapture cam;
 IMGQUEUE imgQueue;
 
 long int secBase, globalUS;
+int camNum;
+int imgWidth, imgHeight;
+
+// int main(int argc, char* argv[]){
+//     if(machine.readPara()<0) return -1;
+//     initCanSocket();
+//     machine.nowPDOMode = 0;
+//     forAllMotor(mIdx) machine.motor[mIdx].initMotorCommuniation();
+//     forAllMotor(mIdx) machine.motor[mIdx].setMotorWorkCondition();
+//     sleep(1);
+
+//     if(argc>1) {
+//         for(int i=1; i<argc; i++) {
+//             if(strcmp(argv[i],"0")==0) {
+//                 printf("执行重上电后的原点定位\n");
+//                 forAllMotor(mIdx) machine.motor[mIdx].motorSetZero();
+//             }
+            
+//             if(strcmp(argv[i],"1")==0) {
+//                 printf("读当前位置信息\n");
+//                 for(int i=0; i<500000; i++) checkPackage();
+//             }
+
+//             if(strcmp(argv[i],"2")==0) {
+//                 printf("走到设定的原点\n");
+//                 forAllMotor(mIdx) machine.motor[mIdx].setTarDecode(machine.motor[mIdx].zeroPoint, 1);
+//                 while(!machine.allPosReached || !machine.allStationary) 
+//                     checkPackage();
+//                 printf("完成\n");
+//             }
 
 
-int main(int argc, char* argv[])
-{
+//             if(strcmp(argv[i],"3")==0) {
+//                 printf("逆求解试算\n");
+//                 for(int i=0; i<500000; i++) checkPackage();
+                    
+//                 printf("求逆解:给定");
+//                 forAllMotor(mIdx) {
+//                     machine.tPoint[1].xyza[mIdx] = machine.tPoint[0].xyza[mIdx];
+//                 }
+//                 machine.inverseSolve(1);
+                    
+//                 forAllMotor(mIdx) {
+//                     machine.motor[mIdx].currentDecode = machine.tPoint[1].decodeVal[mIdx];
+//                 }
+//                 machine.forwardSolve();
+//             }
+//         }
+//         return 0;
+//     }
+
+// }
+
+int main(int argc, char* argv[]){
     can_init();
     printf("---------- CAN通讯设置成功 ----------\n");
 
@@ -47,8 +99,8 @@ int main(int argc, char* argv[])
         printf("---------- 摄像头未打开 ----------\n");
         return -1;
     }
-    cam.set(cv::CAP_PROP_FRAME_WIDTH, 800);
-    cam.set(cv::CAP_PROP_FRAME_HEIGHT, 600);
+    cam.set(cv::CAP_PROP_FRAME_WIDTH, imgWidth);
+    cam.set(cv::CAP_PROP_FRAME_HEIGHT, imgHeight);
 
 
     //创建图像队列
