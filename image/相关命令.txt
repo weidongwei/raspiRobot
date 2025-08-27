@@ -1,0 +1,21 @@
+sudo ip link set can0 type can bitrate 1000000 loopback on
+sudo ip link set can0 type can bitrate 1000000
+sudo ip link set can0 up
+sudo ip link set can0 down
+cansend can0 123#1122334455667788
+
+vcgencmd measure_temp
+vcgencmd measure_volts
+
+
+g++ -o motorTest gripmachine.cpp motorTest.cpp -lgpiod
+
+
+//查看公钥
+cat ~/.ssh/id_rsa.pub
+//将项目中的文件添加到 Git 仓库
+git add .
+//提交文件到本地 Git 仓库
+git commit -m "Initial commit"
+//使用 SSH 将代码推送到 GitHub
+git push -u origin master

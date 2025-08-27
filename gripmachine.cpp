@@ -762,7 +762,7 @@ int run_laser(bool isOpen) {
     const char* chipname = "gpiochip0"; 
     unsigned int line_num = 13; 
     const int period_us = 2000; // PWM周期 2ms (500Hz, 适合舵机)
-    const float duty_cycle = 0.5; // 占空比 50% (舵机中位)
+    const float duty_cycle = 0.3; // 占空比 50% (舵机中位)
     
     // 打开GPIO芯片 
     gpiod_chip* chip = gpiod_chip_open_by_name(chipname); 
