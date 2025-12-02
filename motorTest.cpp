@@ -67,7 +67,7 @@ int main(int argc, char* argv[])
 
 
 
-        /////
+        /////电机测试
         else if(strcmp(control_str, "e0")==0)             {enable_motor(1,false);enable_motor(2,false);}
         else if(strcmp(control_str, "e1")==0)             {enable_motor(1,true);enable_motor(2,true);}
         else if(strcmp(control_str, "1cw")==0)             position_control(1, 5, 0, 20, true, false);
