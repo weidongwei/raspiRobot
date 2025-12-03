@@ -20,6 +20,6 @@ g++ -o motorTest communicate.cpp motor.cpp motorTest.cpp ImgProc.cpp -lgpiod `pk
 //将项目中的文件添加到 Git 仓库
 git add .
 //提交文件到本地 Git 仓库
-git commit -m "Initial commit"
+git commit -m ""
 //使用 SSH 将代码推送到 GitHub
 git push -u origin master

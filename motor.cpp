@@ -13,14 +13,6 @@
 #define MAXANGLE 208        //两电机的最大角度范围为208度
 #define ERRORNUM 0.1        //0.1误差
 
-int position_ctrl(int addr, int rpm, int acceleration, float angle, bool absolute, bool multiMachine){
-    bool dir = angle > 0 ? true : false;
-    int pulses = static_cast<int>(abs(angle) / 360 * 200 * MStep * GEAR_RATIO);
-    position_control(addr, rpm, acceleration, dir, pulses, absolute, multiMachine);
-    return 0;
-}
-
-
 
 
 // 检测电机是否完成运动
@@ -76,7 +68,7 @@ int u_set_zero(int addr){
     }
     printf("%d号电机  碰撞回零\n", addr);
     close_stall(addr);
-    position_ctrl(addr, 350, 0, 10, true, false);
+    position_control_emm(addr, 350, 0, true, 10, true, false);
     sleep(2);
     clear_all(addr);
     set_zero(addr, true);
@@ -93,7 +85,7 @@ int u_go(int addr, float angle, int maxI1, int maxI2){
         return -2;
     }
     go_angle = angle - mainPos;
-    position_ctrl(addr, 350, 0, go_angle, true, false);
+    position_control_emm(addr, 350, 0, true, go_angle, true, false);
     usleep(100000);
     if(u_detect_motor(addr, maxI1, maxI2) == -1){
         return -1;
@@ -131,8 +123,8 @@ int u_sync_go(float angle){
     goAngle1 = MAXANGLE - angle - goodSize - pos1;
     goAngle2 = angle - pos2;
     printf("goodSize = %0.2f, goAngle1 = %0.2f, goAngle2 = %0.2f\n", goodSize, goAngle1, goAngle2);
-    position_ctrl(MOTOR1, 350, 0, goAngle1, true, true);
-    position_ctrl(MOTOR2, 350, 0, goAngle2, true, true);
+    position_control_emm(MOTOR1, 350, 0, true, goAngle1, true, true);
+    position_control_emm(MOTOR2, 350, 0, true, goAngle2, true, true);
     sync_run();
     usleep(100000);
     if(u_detect_multi_motor(400, 400) == -1){

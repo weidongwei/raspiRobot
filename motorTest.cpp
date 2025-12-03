@@ -18,26 +18,28 @@
 
 int main(int argc, char* argv[])
 {
-    // can_init();
-
+    //can_init();
+    CANDevice canDevice;
+    canDevice.init_socket();
+    canDevice.start_receive_thread();
     
 
     char control_str[15];
     for(int i=1; i<argc; i++){
         strcpy(control_str,argv[i]);
-        if (strcmp(control_str, "enable")==0)           {enable_motor(MOTOR1,true);enable_motor(MOTOR2,true);}
-        else if(strcmp(control_str, "disable")==0)      {enable_motor(MOTOR1,false);enable_motor(MOTOR2,false);}
-        else if(strcmp(control_str, "stop")==0)         {stop_motor(MOTOR1);}
-        else if(strcmp(control_str, "read_rpm")==0)      {read_rpm(MOTOR1);read_rpm(MOTOR2);}
-        else if(strcmp(control_str, "read_pos")==0)      {read_position(MOTOR1, 1);read_position(MOTOR2, 1);}
-        else if(strcmp(control_str, "read_ma")==0)      {read_ma(MOTOR1);read_ma(MOTOR2);}
+        if (strcmp(control_str, "enable")==0)           {canDevice.enable_motor(MOTOR1,true);canDevice.enable_motor(MOTOR2,true);}
+        else if(strcmp(control_str, "disable")==0)      {canDevice.enable_motor(MOTOR1,false);canDevice.enable_motor(MOTOR2,false);}
+        else if(strcmp(control_str, "stop")==0)         {canDevice.stop_motor(MOTOR1);}
+        else if(strcmp(control_str, "read_rpm")==0)      {canDevice.read_rpm(MOTOR1);canDevice.read_rpm(MOTOR2);}
+        else if(strcmp(control_str, "read_pos")==0)      {canDevice.read_position(MOTOR1, 1);canDevice.read_position(MOTOR2, 1);}
+        else if(strcmp(control_str, "read_ma")==0)      {canDevice.read_ma(MOTOR1);canDevice.read_ma(MOTOR2);}
         else if(strcmp(control_str, "set_motor")==0)      {
-            set_motor_parameter(MOTOR1, 380, 600, 60);
-            set_motor_parameter(MOTOR2, 380, 600, 60);
+            canDevice.set_motor_parameter(MOTOR1, 380, 600, 60);
+            canDevice.set_motor_parameter(MOTOR2, 380, 600, 60);
         }
         else if(strcmp(control_str, "set_zero")==0)      {
-            set_zero_parameter(MOTOR1, 350, 10000, 380, 150, 60);
-            set_zero_parameter(MOTOR2, 350, 10000, 380, 100, 60);
+            canDevice.set_zero_parameter(MOTOR1, 350, 10000, 380, 150, 60);
+            canDevice.set_zero_parameter(MOTOR2, 350, 10000, 380, 100, 60);
         }
 
         // //终端抓手
@@ -67,17 +69,19 @@ int main(int argc, char* argv[])
 
 
         /////电机测试
-        else if(strcmp(control_str, "e0")==0)             {enable_motor(1,false);enable_motor(2,false);}
-        else if(strcmp(control_str, "e1")==0)             {enable_motor(1,true);enable_motor(2,true);}
-        else if(strcmp(control_str, "1cw")==0)             position_ctrl(1, 5, 0, 20, true, false);
-        else if(strcmp(control_str, "1ccw")==0)             position_ctrl(1, 5, 0, -20, true, false);
-        else if(strcmp(control_str, "2cw")==0)             position_ctrl(2, 50, 0, 180, true, false);
-        else if(strcmp(control_str, "2ccw")==0)             position_ctrl(2, 50, 0, -180, true, false);
-        else if(strcmp(control_str, "s")==0)             {stop_motor(1);stop_motor(2);}
-        else if(strcmp(control_str, "x")==0)             {position_control_x(1, true, 1500, 720, 0, false, 1000);}
-        else if(strcmp(control_str, "tx")==0)             {position_control_t_x2(1, true, 100, 100, 2000, 2000, 0, false);}
-        else if(strcmp(control_str, "read")==0)      {read_position_x(MOTOR1, 1);}
-
+        else if(strcmp(control_str, "e0")==0)             {canDevice.enable_motor(1,false);canDevice.enable_motor(2,false);}
+        else if(strcmp(control_str, "e1")==0)             {canDevice.enable_motor(1,true);canDevice.enable_motor(2,true);}
+        else if(strcmp(control_str, "1cw")==0)             canDevice.position_control_x(1, true, 100, 2000, 0, false);
+        else if(strcmp(control_str, "1ccw")==0)            canDevice.position_control_x(1, true, 3000, 5000, 0, false);
+        else if(strcmp(control_str, "2cw")==0)             canDevice.position_control_x(2, 50, 0, 180, true, false);
+        else if(strcmp(control_str, "2ccw")==0)            canDevice.position_control_x(2, 50, 0, -180, true, false);
+        else if(strcmp(control_str, "s")==0)             {canDevice.stop_motor(1);canDevice.stop_motor(2);}
+        else if(strcmp(control_str, "x")==0)             {canDevice.position_control_x(1, true, 1500, 720, 0, false);}
+        else if(strcmp(control_str, "tx")==0)             {canDevice.position_control_t_x(1, true, 100, 100, 2000, 2000, 0, false);}
+        else if(strcmp(control_str, "read")==0)      {canDevice.read_position(MOTOR1, 1);}
+        
+        else if(strcmp(control_str, "emm")==0)             canDevice.position_control_emm(1, 100, 0, true, 2000, true, false);
+        else if(strcmp(control_str, "emm1")==0)            canDevice.position_control_emm(1, 500, 0, true, 2000, true, false);
 
 
         // //摄像头测试
@@ -92,6 +96,7 @@ int main(int argc, char* argv[])
         //     sleep(3);         // 保持1秒
         //     run_pump(false);  // 关闭电磁阀
         // }
+        sleep(20);
 
     }
 

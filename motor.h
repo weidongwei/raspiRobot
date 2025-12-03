@@ -3,7 +3,6 @@
 
 #include <iostream>
 
-int position_ctrl(int addr, int rpm, int acceleration, float angle, bool absolute, bool multiMachine);
 
 int u_detect_motor(int addr, int maxMa1, int maxMa2);
 int u_detect_multi_motor(int maxI1,int maxI2);

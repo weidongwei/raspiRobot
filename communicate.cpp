@@ -9,140 +9,233 @@
 #include <sys/socket.h>
 #include <linux/can.h>
 #include <linux/can/raw.h>
+#include <poll.h>
+#include <thread>
+#include <atomic>
 
 #include "communicate.h"
 
 #define com "sudo ip link set can0 type can bitrate 1000000"
 #define up "sudo ifconfig can0 up"
 #define down "sudo ifconfig can0 down"
-#define SEND_CAN                            \
-    struct can_frame frame;                 \
-    memset(&frame, 0, sizeof(can_frame));   \
-    frame.can_id = base_id | CAN_EFF_FLAG;  \
-    frame.can_dlc = dlc;                    \
-    memcpy(frame.data, data, dlc);          \
-    can_send(frame);                        \
+
+uint8_t CANDevice::FIXED_CHECKSUM = 0x6B;
 
 
-const uint8_t FIXED_CHECKSUM = 0x6B;
 
-// 计算电机基ID (addr << 8)
-canid_t get_base_id(int addr) {
-    return static_cast<canid_t>(addr) << 8;
-}
-
-//CAN通讯初始化
+// CAN通讯初始化
 int can_init(){
     system(down);
     system(com);
     system(up);
     return 0;
+} 
+// 获取基础CAN ID
+canid_t CANDevice::get_base_id(int addr) {
+    return static_cast<canid_t>(addr) << 8;
 }
+// 初始化CAN套接字
+int CANDevice::init_socket(){
+    sock_fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
+    if (sock_fd < 0) {
+        perror("socket create failed");
+        return false;
+    }
 
-//发送can帧
-int can_send(can_frame frame){
-    int s, nbytes;                  //s:socket文件描述符,nbytes：接收到的的数据长度
-    struct sockaddr_can addr;       //addr：CANsocket地址结构
-    struct ifreq ifr;               //ifr：用于指定CAN接口(如can0)
-    //创建套接字
-    s = socket(PF_CAN, SOCK_RAW, CAN_RAW);
-    strcpy(ifr.ifr_name, "can0" );
-    //指定can0设备
-    ioctl(s, SIOCGIFINDEX, &ifr); 
+    struct ifreq ifr;
+    strcpy(ifr.ifr_name, ifname.c_str());
+    if (ioctl(sock_fd, SIOCGIFINDEX, &ifr) < 0) {
+        perror("ioctl failed");
+        return false;
+    }
+
+    struct sockaddr_can addr{};
     addr.can_family = AF_CAN;
     addr.can_ifindex = ifr.ifr_ifindex;
-    //关闭回环模式(Loopback)
+
+    // 关闭回环
     int loopback = 0;
-    setsockopt(s, SOL_CAN_RAW, CAN_RAW_LOOPBACK, &loopback, sizeof(loopback));
-    //将套接字与can0绑定
-    bind(s, (struct sockaddr *)&addr, sizeof(addr));
-    //发送frame[0]
-    nbytes = write(s, &frame, sizeof(frame));
-    if(nbytes != sizeof(frame))
-    {
-        printf("Send Error frame[0]\n!");
+    setsockopt(sock_fd, SOL_CAN_RAW, CAN_RAW_LOOPBACK, &loopback, sizeof(loopback));
+
+    // 不接收自己的消息
+    int recvOwn = 0;
+    setsockopt(sock_fd, SOL_CAN_RAW, CAN_RAW_RECV_OWN_MSGS, &recvOwn, sizeof(recvOwn));
+
+    if (bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind failed");
+        return false;
     }
-    close(s);
+
     return 0;
 }
+// 发送CAN数据帧
+int CANDevice::can_send(const struct can_frame& frame){
+    if (sock_fd < 0) {
+        printf("Socket not initialized!\n");
+        return -1;
+    }
 
-//接收CAN帧
-int can_receive(struct can_frame *r_frame, int filter_id){
-    int s, nbytes = 0;
-    struct sockaddr_can addr;
-    struct ifreq ifr;
-    struct can_frame frame;         //用于零时保存接收到的一帧数据
-    struct can_filter rfilter;      //CAN过滤器结构
+    int nbytes = write(sock_fd, &frame, sizeof(frame));
+    if (nbytes != sizeof(frame)) {
+        printf("CAN Send Failed!\n");
+        return -1;
+    }
+    return 0;
+}
+// 发送数据包
+void CANDevice::send_packet(canid_t base_id, uint8_t dlc, const uint8_t* data){
+    struct can_frame frame{};
+    frame.can_id = base_id | CAN_EFF_FLAG;
+    frame.can_dlc = dlc;
+    memcpy(frame.data, data, dlc);
 
-    memset(&frame,0,sizeof(can_frame));     //初始化接收帧数据
-    s = socket(PF_CAN, SOCK_RAW, CAN_RAW);
-    strcpy(ifr.ifr_name, "can0" );
-    ioctl(s, SIOCGIFINDEX, &ifr); 
-    addr.can_family = AF_CAN;
-    addr.can_ifindex = ifr.ifr_ifindex;
-    int loopback = 0;
-    setsockopt(s, SOL_CAN_RAW, CAN_RAW_LOOPBACK, &loopback, sizeof(loopback));
-    int recv_own_msgs = 0;
-    setsockopt(s, SOL_CAN_RAW, CAN_RAW_RECV_OWN_MSGS, &recv_own_msgs, sizeof(recv_own_msgs));
+    can_send(frame);
+}
+// 接收CAN数据帧
+int CANDevice::can_receive(struct can_frame* r_frame, int filter_id){
+    if (sock_fd < 0) return -1;
 
+    struct can_filter rfilter;
     rfilter.can_id = get_base_id(filter_id);
     rfilter.can_mask = CAN_SFF_MASK;
-    setsockopt(s, SOL_CAN_RAW, CAN_RAW_FILTER, &rfilter, sizeof(rfilter));
 
-    bind(s, (struct sockaddr *)&addr, sizeof(addr));
+    setsockopt(sock_fd, SOL_CAN_RAW, CAN_RAW_FILTER, &rfilter, sizeof(rfilter));
 
-    // 设置超时机制
     fd_set read_fds;
-    struct timeval timeout;
     FD_ZERO(&read_fds);
-    FD_SET(s, &read_fds);
-    timeout.tv_sec = 1; // 1 秒
+    FD_SET(sock_fd, &read_fds);
+
+    struct timeval timeout;
+    timeout.tv_sec = 1;
     timeout.tv_usec = 0;
 
-    int ret = select(s + 1, &read_fds, NULL, NULL, &timeout);
-    if (ret <= 0) {
-        close(s);
+    int ret = select(sock_fd + 1, &read_fds, nullptr, nullptr, &timeout);
+    if (ret <= 0)
         return -1;
-    }
 
-    nbytes = read(s, &frame, sizeof(frame));
+    int nbytes = read(sock_fd, r_frame, sizeof(struct can_frame));
     if (nbytes < 0) {
-        perror("CAN没有读到\n");
-        close(s);
+        perror("CAN read error");
         return -1;
     }
 
-    *r_frame = frame;
-    close(s);
     return 0;
-
 }
-
-//打印回应帧
-int recive_dayin(uint8_t id, int addr, std::string controlName){
-    can_frame response;
-    memset(&response, 0, sizeof(can_frame));
+// 接收并处理电机响应
+int CANDevice::recive_dayin(uint8_t id, int addr, const std::string& controlName){
+    struct can_frame response{};
     int flag = 1;
-    for(int i=0; i<4; i++){
+
+    for (int i = 0; i < 4; i++) {
         flag = can_receive(&response, addr);
         if (flag == 0) break;
     }
-    if (response.can_dlc == 3 && response.data[0] == id) {
-        if(response.data[1] == 0x02 && response.data[2] == 0x6B){
-            printf("%s启动成功\n",controlName.c_str());
-        }else if(response.data[1] == 0xE2 && response.data[2] == 0x6B){
-            printf("%s条件不满足\n",controlName.c_str());
-        }
-    } else if(response.data[0] == 0x00 && response.data[1] == 0xEE && response.data[2] == 0x6B){
-        printf("%s命令错误\n",controlName.c_str());
+
+    if (flag != 0) {
+        printf("%s：接收超时或读取失败\n", controlName.c_str());
+        return -1;
     }
-    if(flag != 0) printf("超时或读取失败\n");
+
+    if (response.can_dlc == 3 && response.data[0] == id) {
+        if (response.data[1] == 0x02 && response.data[2] == FIXED_CHECKSUM)
+            printf("%s 启动成功\n", controlName.c_str());
+        else if (response.data[1] == 0xE2 && response.data[2] == FIXED_CHECKSUM)
+            printf("%s 条件不满足\n", controlName.c_str());
+    }
+    else if (response.data[0] == 0x00 &&
+             response.data[1] == 0xEE &&
+             response.data[2] == FIXED_CHECKSUM){
+        printf("%s 命令错误\n", controlName.c_str());
+    }
+
     return 0;
+}
+
+
+
+void CANDevice::start_receive_thread() {
+    if (sock_fd < 0) {
+        std::cout << "sock_fd invalid, cannot start receiver thread!" << std::endl;
+        return;
+    }
+    if (running) return;
+    running = true;
+    recv_thread = std::thread(&CANDevice::receive_loop, this);
+}
+
+void CANDevice::stop_receive_thread() {
+    if (running) {
+        running = false;
+    }
+
+    if (recv_thread.joinable()) {
+        recv_thread.join();
+    }
+}
+
+void CANDevice::receive_loop() {
+    printf("CAN receive thread started.\n");
+    
+    struct can_frame response{};
+    struct pollfd fds;
+
+    fds.fd = sock_fd;
+    fds.events = POLLIN | POLLERR | POLLHUP;
+
+    const int TIMEOUT_MS = 60000;  // 60秒
+
+    if (sock_fd < 0) {
+        printf("sock_fd invalid, exit thread.\n");
+        return;
+    }
+    while (running) {
+
+        int ret = poll(&fds, 1, TIMEOUT_MS);
+
+        if (ret == 0) {  
+            printf("CAN receive timeout (60s), exiting thread.\n");
+            running = false;
+            break;
+        } else if (ret < 0) {
+            perror("poll error");
+            running = false;
+            break;
+        }
+
+        if (fds.revents & (POLLERR | POLLHUP)) {
+            printf("CAN socket closed or error.\n");
+            break;
+        }
+
+        int nbytes = read(sock_fd, &response, sizeof(response));
+        
+        if (nbytes <= 0) {
+            if (nbytes < 0) perror("CAN read error");
+            continue;   // 不退出线程，继续轮询
+        }
+
+        // -------- 业务逻辑部分 --------
+        if (nbytes > 0 && response.can_dlc == 3 && (response.data[0] == 0xFB || response.data[0] == 0xFD)) {
+
+            if (response.data[1] == 0x9F && response.data[2] == FIXED_CHECKSUM) {
+                printf("%s 运动完毕 位置模式\n");
+                running = false;
+                break;
+            }
+            else if (response.data[1] == 0xE2 && response.data[2] == FIXED_CHECKSUM) {
+                printf("%s 条件不满足 位置模式\n");
+            }
+        }else if (nbytes > 0 && response.data[0] == 0x00 && response.data[1] == 0xEE && response.data[2] == FIXED_CHECKSUM){
+            printf("%s 命令错误 位置模式\n");
+        }
+    }
+
+    printf("CAN receive thread stopped.\n");
 }
 
 //----------------------控制动作命令----------------------
 // 电机使能控制
-int enable_motor(int addr, bool enable){   
+int CANDevice::enable_motor(int addr, bool enable){   
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 5;
     uint8_t enable_val = static_cast<uint8_t>(enable ? 0x01 : 0x00);
@@ -153,14 +246,14 @@ int enable_motor(int addr, bool enable){
         0x00,               // 多机同步标志
         FIXED_CHECKSUM      // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
     recive_dayin(0xF3, addr, "电机使能");
     return 0;
 }
 
 // 速度模式控制
 // speed_control(MOTOR1, true, 350, 10, false);
-int speed_control(int addr, bool direction, int rpm, int acceleration, bool multiMachine){
+int CANDevice::speed_control(int addr, bool direction, int acc, int rpm, bool multiMachine){
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 7;
     uint8_t dir = static_cast<uint8_t>(direction ? 0x01 : 0x00);
@@ -168,32 +261,33 @@ int speed_control(int addr, bool direction, int rpm, int acceleration, bool mult
     uint8_t data[] = {
         0xF6,                               // 命令
         dir,                                // 方向         --01表示旋转方向为CCW逆时针（00表示CW顺时针）
+        static_cast<uint8_t>(acc), // 加速度档位   --0A表示加速度档位为0x0A = 10
         static_cast<uint8_t>(rpm >> 8),     // 速度高字节
         static_cast<uint8_t>(rpm & 0xFF),   // 速度低字节   --05 DC表示速度为0x05DC = 1500(RPM)
-        static_cast<uint8_t>(acceleration), // 加速度档位   --0A表示加速度档位为0x0A = 10
         mMachine,                           // 多机同步标志 --00表示不启用多机同步（01表示启用）
         FIXED_CHECKSUM                      // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
     recive_dayin(0xF6, addr, "速度模式");
     return 0;
 }
 
-// 位置模式控制
-// position_control(MOTOR1, 350, 0, true, 90, true, false);
-int position_control(int addr, int rpm, int acceleration, bool dir, int pulses, bool absolute, bool multiMachine){
+// 位置模式控制(emm)
+// position_control_emm(MOTOR1, 350, 0, true, 90, true, false);
+int CANDevice::position_control_emm(int addr, int rpm, int acceleration, bool dir, int pulses, bool absolute, bool multiMachine){
     canid_t base_id1 = get_base_id(addr);
     uint8_t dlc1 = 8;
     uint8_t dir_val = static_cast<uint8_t>(dir == true ? 0x01 : 0x00);
+    int pulses_val = abs(pulses) / 360 * 200 * 16 * 1;
     uint8_t data1[8] = {
         0xFD,                                           // 功能码
         dir_val,                                        // 方向         --01表示旋转方向为CCW逆时针（00表示CW顺时针）
         static_cast<uint8_t>(rpm >> 8),                 // 速度高字节
         static_cast<uint8_t>(rpm & 0xFF),               // 速度低字节    --05 DC表示速度为0x05DC = 1500(RPM)
         static_cast<uint8_t>(acceleration),             // 加速度档位    --0A表示加速度档位为0x0A = 10
-        static_cast<uint8_t>((pulses >> 24) & 0xFF),    // 脉冲3         --00 00 7D 00表示脉冲数为0x00007D00 = 32000个
-        static_cast<uint8_t>((pulses >> 16) & 0xFF),    // 脉冲2
-        static_cast<uint8_t>((pulses >> 8) & 0xFF)      // 脉冲1
+        static_cast<uint8_t>((pulses_val >> 24) & 0xFF),    // 脉冲3         --00 00 7D 00表示脉冲数为0x00007D00 = 32000个
+        static_cast<uint8_t>((pulses_val >> 16) & 0xFF),    // 脉冲2
+        static_cast<uint8_t>((pulses_val >> 8) & 0xFF)      // 脉冲1
     };
 
     
@@ -203,7 +297,7 @@ int position_control(int addr, int rpm, int acceleration, bool dir, int pulses, 
     uint8_t mMachine = static_cast<uint8_t>(multiMachine ? 0x01 : 0x00);
     uint8_t data2[5] = {
         0xFD,                                       // 功能码（第二帧重复）
-        static_cast<uint8_t>(pulses & 0xFF),        // 脉冲0
+        static_cast<uint8_t>(pulses_val & 0xFF),        // 脉冲0
         absolute_val,                               // 相对/绝对模式    --00表示相对位置模式（01表示绝对位置模式）
         mMachine,                                   // 多机同步标志     --00表示不启用多机同步（01表示启用）
         FIXED_CHECKSUM,                             // 校验
@@ -228,13 +322,13 @@ int position_control(int addr, int rpm, int acceleration, bool dir, int pulses, 
 }
 
 // 位置模式控制(X)
-int position_control_x(int addr, bool dir, int rpm, float angle, int mode, bool multiMachine, int maxma){
+int CANDevice::position_control_x(int addr, bool dir, int rpm, float angle, int mode, bool multiMachine){
     canid_t base_id1 = get_base_id(addr);
     uint8_t dlc1 = 8;
     uint8_t dir_val = static_cast<uint8_t>(dir == true ? 0x01 : 0x00);
     int angle_val = static_cast<int>(angle * 10);
     uint8_t data1[8] = {
-        0xCB,                                               // 功能码
+        0xFB,                                               // 功能码
         dir_val,                                            // 方向         --01表示旋转方向为CCW逆时针（00表示CW顺时针）
         static_cast<uint8_t>(rpm >> 8),                     // 速度高字节
         static_cast<uint8_t>(rpm & 0xFF),                   // 速度低字节    --05 DC表示速度为0x05DC = 1500(RPM)
@@ -246,100 +340,25 @@ int position_control_x(int addr, bool dir, int rpm, float angle, int mode, bool 
 
     
     canid_t base_id2 = get_base_id(addr) + 1;
-    uint8_t dlc2 = 6;
+    uint8_t dlc2 = 4;
     uint8_t mMachine = static_cast<uint8_t>(multiMachine ? 0x01 : 0x00);
-    uint8_t data2[6] = {
-        0xCB,                                               // 功能码
-        static_cast<uint8_t>(mode),                // 相对/绝对模式    --00表示相对位置模式（01表示绝对位置模式）
-        mMachine,                                   // 多机同步标志     --00表示不启用多机同步（01表示启用）
-        static_cast<uint8_t>(maxma >> 8),           
-        static_cast<uint8_t>(maxma & 0xFF),         // 最大电流
-        FIXED_CHECKSUM,                             // 校验
-    };
-
-
-    struct can_frame frame1, frame2;
-    memset(&frame1, 0, sizeof(can_frame));
-    memset(&frame2, 0, sizeof(can_frame));
-    frame1.can_id = base_id1 | CAN_EFF_FLAG;
-    frame1.can_dlc = dlc1;
-    memcpy(frame1.data, data1, dlc1);
-    frame2.can_id = base_id2 | CAN_EFF_FLAG;
-    frame2.can_dlc = dlc2;
-    memcpy(frame2.data, data2, dlc2);
-
-    can_send(frame1);
-    can_send(frame2);
-
-    recive_dayin(0xCB, addr, "x位置模式");
-    return 0;
-}
-
-// 位置模式梯形曲线加减速(X)
-int position_control_t_x(int addr, bool dir,int accup, int accdown, int rpm, float angle, int mode, bool multiMachine, int maxma){
-    canid_t base_id1 = get_base_id(addr);
-    uint8_t dlc1 = 8;
-    uint8_t dir_val = static_cast<uint8_t>(dir == true ? 0x01 : 0x00);
-    int angle_val = static_cast<int>(angle * 10);
-    uint8_t data1[8] = {
-        0xCD,                                               // 功能码
-        dir_val,                                            // 方向         --01表示旋转方向为CCW逆时针（00表示CW顺时针）
-        static_cast<uint8_t>(accup >> 8),                   // 加速加速度高字节
-        static_cast<uint8_t>(accup & 0xFF),                 // 加速加速度低字节
-        static_cast<uint8_t>(accdown >> 8),                 // 减速加速度高字节
-        static_cast<uint8_t>(accdown & 0xFF),               // 减速加速度低字节
-        static_cast<uint8_t>(rpm >> 8),                     // 速度高字节
-        static_cast<uint8_t>(rpm & 0xFF)                    // 速度低字节    --05 DC表示速度为0x05DC = 1500(RPM)
-    };
-
-    
-    canid_t base_id2 = get_base_id(addr) + 1;
-    uint8_t dlc2 = 8;
-    uint8_t mMachine = static_cast<uint8_t>(multiMachine ? 0x01 : 0x00);
-    uint8_t data2[8] = {
-        0xCD,                                               // 功能码
-        static_cast<uint8_t>((angle_val >> 24) & 0xFF),     // 脉冲3         --00 00 7D 00表示脉冲数为0x00007D00 = 32000个
-        static_cast<uint8_t>((angle_val >> 16) & 0xFF),     // 脉冲2
-        static_cast<uint8_t>((angle_val >> 8) & 0xFF),      // 脉冲1
-        static_cast<uint8_t>(angle_val & 0xFF),             // 脉冲0
+    uint8_t data2[4] = {
+        0xFB,                                               // 功能码
         static_cast<uint8_t>(mode),                         // 相对/绝对模式    --00表示相对位置模式（01表示绝对位置模式）
         mMachine,                                           // 多机同步标志     --00表示不启用多机同步（01表示启用）
-        static_cast<uint8_t>(maxma >> 8)
-    };
-
-    canid_t base_id3 = get_base_id(addr) + 2;
-    uint8_t dlc3 = 3;
-    uint8_t data3[3] = {
-        0xCD,                                               // 功能码
-        static_cast<uint8_t>(maxma & 0xFF),                 // 最大电流
-        FIXED_CHECKSUM                                      // 校验
+        FIXED_CHECKSUM,                                     // 校验
     };
 
 
-    struct can_frame frame1, frame2,frame3;
-    memset(&frame1, 0, sizeof(can_frame));
-    memset(&frame2, 0, sizeof(can_frame));
-    memset(&frame3, 0, sizeof(can_frame));
-    frame1.can_id = base_id1 | CAN_EFF_FLAG;
-    frame1.can_dlc = dlc1;
-    memcpy(frame1.data, data1, dlc1);
-    frame2.can_id = base_id2 | CAN_EFF_FLAG;
-    frame2.can_dlc = dlc2;
-    memcpy(frame2.data, data2, dlc2);
-    frame3.can_id = base_id3 | CAN_EFF_FLAG;
-    frame3.can_dlc = dlc3;
-    memcpy(frame3.data, data3, dlc3);
+    send_packet(base_id1, dlc1, data1);
+    send_packet(base_id2, dlc2, data2);
 
-    can_send(frame1);
-    can_send(frame2);
-    can_send(frame3);
-
-    recive_dayin(0xCD, addr, "x梯形加速位置模式");
+    // recive_dayin(0xFB, addr, "x位置模式");
     return 0;
 }
 
-// 位置模式梯形曲线加减速(X)
-int position_control_t_x2(int addr, bool dir,int accup, int accdown, int rpm, float angle, int mode, bool multiMachine){
+// 梯形曲线加减速(X)
+int CANDevice::position_control_t_x(int addr, bool dir,int accup, int accdown, int rpm, float angle, int mode, bool multiMachine){
     canid_t base_id1 = get_base_id(addr);
     uint8_t dlc1 = 8;
     uint8_t dir_val = static_cast<uint8_t>(dir == true ? 0x01 : 0x00);
@@ -372,25 +391,15 @@ int position_control_t_x2(int addr, bool dir,int accup, int accdown, int rpm, fl
 
 
 
-    struct can_frame frame1, frame2;
-    memset(&frame1, 0, sizeof(can_frame));
-    memset(&frame2, 0, sizeof(can_frame));
-    frame1.can_id = base_id1 | CAN_EFF_FLAG;
-    frame1.can_dlc = dlc1;
-    memcpy(frame1.data, data1, dlc1);
-    frame2.can_id = base_id2 | CAN_EFF_FLAG;
-    frame2.can_dlc = dlc2;
-    memcpy(frame2.data, data2, dlc2);
-
-    can_send(frame1);
-    can_send(frame2);
+    send_packet(base_id1, dlc1, data1);
+    send_packet(base_id2, dlc2, data2);
 
     recive_dayin(0xFD, addr, "x梯形加速位置模式");
     return 0;
 }
 
 // 电机停止
-int stop_motor(int addr){
+int CANDevice::stop_motor(int addr){
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 4;
     uint8_t data[] = {
@@ -399,13 +408,13 @@ int stop_motor(int addr){
         0x00,         // 多机同步标志
         FIXED_CHECKSUM // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
     recive_dayin(0xFE, addr, "停止");
     return 0;
 }
 
 // 当前的位置角度清零
-int clear_all(int addr){
+int CANDevice::clear_all(int addr){
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 3;
     uint8_t data[] = {
@@ -413,13 +422,13 @@ int clear_all(int addr){
         0x6D,                               // 命令
         FIXED_CHECKSUM                      // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
     recive_dayin(0x0A, addr, "位置角度清零");
     return 0;
 }
 
 // 设置单圈回零的零点位置
-int set_zero(int addr, bool save){
+int CANDevice::set_zero(int addr, bool save){
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 4;
     uint8_t save_val = static_cast<uint8_t>(save ? 0x01 : 0x00);
@@ -429,13 +438,13 @@ int set_zero(int addr, bool save){
         save_val,                           // 是否存储：0x01 表示保存
         FIXED_CHECKSUM                      // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
     recive_dayin(0x93, addr, "设置单圈回零的零点位置");
     return 0;
 }
 
 // 触发回零
-int run_zero(int addr,int mode, bool multiMachine){
+int CANDevice::run_zero(int addr,int mode, bool multiMachine){
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 4;
     uint8_t mMachine = static_cast<uint8_t>(multiMachine ? 0x01 : 0x00);
@@ -449,13 +458,13 @@ int run_zero(int addr,int mode, bool multiMachine){
         mMachine,                           // 多机同步标志     --00表示不启用多机同步（01表示启用）
         FIXED_CHECKSUM                      // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
     recive_dayin(0x9A, addr, "触发回零");
     return 0;
 }
 
 // 修改任意细分
-int set_division(int addr,bool save, int division){
+int CANDevice::set_division(int addr,bool save, int division){
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 5;
     uint8_t save_val = static_cast<uint8_t>(save ? 0x01 : 0x00);
@@ -466,13 +475,13 @@ int set_division(int addr,bool save, int division){
         static_cast<uint8_t>(division),     // 细分     --0x07 = 7细分(00表示256细分)
         FIXED_CHECKSUM                      // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
     recive_dayin(0x84, addr, "修改细分");
     return 0;
 }
 
 // 修改驱动配置参数
-int set_motor_parameter(int addr, int dangerRpm, int dangerMa, int dangerTime){
+int CANDevice::set_motor_parameter(int addr, int dangerRpm, int dangerMa, int dangerTime){
     canid_t base_id1 = get_base_id(addr);
     uint8_t dlc1 = 8;
     uint8_t data1[8] = {
@@ -536,40 +545,18 @@ int set_motor_parameter(int addr, int dangerRpm, int dangerMa, int dangerTime){
     };
 
 
-    struct can_frame frame1, frame2, frame3, frame4, frame5;
-    memset(&frame1, 0, sizeof(can_frame));
-    memset(&frame2, 0, sizeof(can_frame));
-    memset(&frame3, 0, sizeof(can_frame));
-    memset(&frame4, 0, sizeof(can_frame));
-    memset(&frame5, 0, sizeof(can_frame));
-    frame1.can_id = base_id1 | CAN_EFF_FLAG;
-    frame1.can_dlc = dlc1;
-    memcpy(frame1.data, data1, dlc1);
-    frame2.can_id = base_id2 | CAN_EFF_FLAG;
-    frame2.can_dlc = dlc2;
-    memcpy(frame2.data, data2, dlc2);
-    frame3.can_id = base_id3 | CAN_EFF_FLAG;
-    frame3.can_dlc = dlc3;
-    memcpy(frame3.data, data3, dlc3);
-    frame4.can_id = base_id4 | CAN_EFF_FLAG;
-    frame4.can_dlc = dlc4;
-    memcpy(frame4.data, data4, dlc4);
-    frame5.can_id = base_id5 | CAN_EFF_FLAG;
-    frame5.can_dlc = dlc5;
-    memcpy(frame5.data, data5, dlc5);
-
-    can_send(frame1);
-    can_send(frame2);
-    can_send(frame3);
-    can_send(frame4);
-    can_send(frame5);
+    send_packet(base_id1, dlc1, data1);
+    send_packet(base_id2, dlc2, data2);
+    send_packet(base_id3, dlc3, data3);
+    send_packet(base_id4, dlc4, data4);
+    send_packet(base_id5, dlc5, data5);
 
     recive_dayin(0x48, addr, "修改驱动配置参数");
     return 0;
 }
 
 // 修改原点回零参数
-int set_zero_parameter(int addr, int acceleration, int timeout , int dangerRpm, int dangerMa, int dangerTime){
+int CANDevice::set_zero_parameter(int addr, int acceleration, int timeout , int dangerRpm, int dangerMa, int dangerTime){
     canid_t base_id1 = get_base_id(addr);
     uint8_t dlc1 = 8;
     uint8_t data1[8] = {
@@ -607,31 +594,16 @@ int set_zero_parameter(int addr, int acceleration, int timeout , int dangerRpm, 
     };
 
 
-    struct can_frame frame1, frame2, frame3;
-    memset(&frame1, 0, sizeof(can_frame));
-    memset(&frame2, 0, sizeof(can_frame));
-    memset(&frame3, 0, sizeof(can_frame));
-    frame1.can_id = base_id1 | CAN_EFF_FLAG;
-    frame1.can_dlc = dlc1;
-    memcpy(frame1.data, data1, dlc1);
-    frame2.can_id = base_id2 | CAN_EFF_FLAG;
-    frame2.can_dlc = dlc2;
-    memcpy(frame2.data, data2, dlc2);
-    frame3.can_id = base_id3 | CAN_EFF_FLAG;
-    frame3.can_dlc = dlc3;
-    memcpy(frame3.data, data3, dlc3);
-    
-
-    can_send(frame1);
-    can_send(frame2);
-    can_send(frame3);
+    send_packet(base_id1, dlc1, data1);
+    send_packet(base_id2, dlc2, data2);
+    send_packet(base_id3, dlc3, data3);
 
     recive_dayin(0x4C, addr, "修改原点回零参数");
     return 0;
 }
 
 // 解除堵转保护
-int close_stall(int addr){
+int CANDevice::close_stall(int addr){
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 3;
     uint8_t data[] = {
@@ -639,13 +611,13 @@ int close_stall(int addr){
         0x52,                               // 命令
         FIXED_CHECKSUM                      // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
     recive_dayin(0x0E, addr, "解除堵转保护");
     return 0;
 }
 
 // 多机同步
-int sync_run(){
+int CANDevice::sync_run(){
     canid_t base_id = get_base_id(0);
     uint8_t dlc = 3;
     uint8_t data[3] = {
@@ -653,21 +625,21 @@ int sync_run(){
         0x66,         // 固定标识
         FIXED_CHECKSUM // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
     recive_dayin(0xFF, 1, "多机同步");
     return 0;
 }
 
 //----------------------读取参数命令----------------------
 // 读取电机实时转速
-int read_rpm(int addr){
+int CANDevice::read_rpm(int addr){
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 2;
     uint8_t data[] = {
         0x35,          // 命令
         FIXED_CHECKSUM // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
 
     int value = 1;
     can_frame response;
@@ -675,9 +647,9 @@ int read_rpm(int addr){
     if (can_receive(&response, addr) == 0) {
         if (response.can_dlc == 5 && response.data[0] == 0x35) {
             value = (response.data[2] << 8) | response.data[3];
-            uint8_t sign = response.data[1]; // 00：负；01：正
+            uint8_t sign = response.data[1]; // 00：正；01：负
             if (sign == 0x00) value = -value;
-            printf("%d号电机实时转速：%d rpm\n", addr, value);
+            printf("%d号电机实时转速：%d rpm\n", addr, value/10);
         } else if(response.data[0] == 0x00 && response.data[1] == 0xEE && response.data[2] == 0x6B){
             printf("读取电机实时转速错误\n");
         }
@@ -688,14 +660,14 @@ int read_rpm(int addr){
 }
 
 // 读取电机实时位置角度
-float read_position(int addr, float gear_ratio) {
+float CANDevice::read_position(int addr, float gear_ratio) {
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 2;
     uint8_t data[] = {
         0x36,          // 命令
         FIXED_CHECKSUM // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
 
     can_frame response;
     memset(&response, 0, sizeof(can_frame));
@@ -707,7 +679,7 @@ float read_position(int addr, float gear_ratio) {
                 (response.data[3] << 16) |
                 (response.data[4] << 8)  |
                 response.data[5];
-            float angle = (pos_raw * 360.0f) / 65536.0f;
+            float angle = pos_raw / 10;
             angle = angle / gear_ratio;
             if (sign == 0x00) angle = -angle;
             printf("pos_raw = %.2f\n", angle);
@@ -724,50 +696,16 @@ float read_position(int addr, float gear_ratio) {
     return 0;
 }
 
-float read_position_x(int addr, float gear_ratio) {
-    canid_t base_id = get_base_id(addr);
-    uint8_t dlc = 2;
-    uint8_t data[] = {
-        0x36,          // 命令
-        FIXED_CHECKSUM // 校验
-    };
-    SEND_CAN
-
-    can_frame response;
-    memset(&response, 0, sizeof(can_frame));
-    if (can_receive(&response, addr) == 0) {
-        if (response.can_dlc == 7 && response.data[0] == 0x36) {
-            uint8_t sign = response.data[1]; // 00：正；01：负
-            uint32_t pos_raw = 
-                (response.data[2] << 24) |
-                (response.data[3] << 16) |
-                (response.data[4] << 8)  |
-                response.data[5];
-            float angle = pos_raw / 10;
-            angle = angle / gear_ratio;
-            if (sign == 0x00) angle = -angle;
-            printf("pos_raw = %.2f\n", angle);
-            printf("%d号电机实时位置：%.2f°\n", addr, angle);
-            return angle;
-        } 
-        else if (response.data[0] == 0x00 && response.data[1] == 0xEE && response.data[2] == 0x6B) {
-            printf("读取电机实时位置错误\n");
-        }
-    } else {
-        printf("超时或读取失败\n");
-    }
-    return 0;
-}
 
 // 读取电机实时电流
-int read_ma(int addr) {
+int CANDevice::read_ma(int addr) {
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 2;
     uint8_t data[] = {
         0x27,          // 命令
         FIXED_CHECKSUM // 校验
     };
-    SEND_CAN
+    send_packet(base_id, dlc, data);
 
     int value = 1;
     can_frame response;
