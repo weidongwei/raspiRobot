@@ -4,8 +4,7 @@
 #include <time.h>
 #include <vector>
 
-#include "main.h"
-#include "thread.h"
+
 
 cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) <<
     793.0954708529097, 0, 390.0087179575285,
