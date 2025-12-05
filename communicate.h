@@ -4,20 +4,22 @@
 #include <linux/can.h>
 #include <iostream>
 #include <atomic>
+#include <thread>
+#include <unistd.h>
 
 int can_init();
+bool loadJson(const std::string& filename);
+std::string getDescription(int id);
 
 class CANDevice {
 public:
     static uint8_t FIXED_CHECKSUM;
-    CANDevice(const std::string& name = "can0") : ifname(name), sock_fd(-1) {
-
-    }
+    CANDevice(const std::string& name = "can0") : ifname(name), sock_fd(-1) {}
     ~CANDevice(){
-        stop_receive_thread();   // 关闭线程
-        if (sock_fd >= 0)
+        if (sock_fd >= 0){
             close(sock_fd);
             sock_fd = -1;
+        }
     }
     // can通讯相关函数
     int init_socket();
@@ -26,9 +28,7 @@ public:
     int can_receive(struct can_frame* r_frame, int filter_id);
     int recive_dayin(uint8_t id, int addr, const std::string& controlName);
     canid_t get_base_id(int addr);
-    void start_receive_thread();
-    void stop_receive_thread();
-    void receive_loop();
+    void handle_can_receive();
     // 控制动作命令
     int enable_motor(int addr, bool enable);
     int speed_control(int addr, bool direction, int acc, int rpm, bool multiMachine);

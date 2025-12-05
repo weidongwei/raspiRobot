@@ -12,6 +12,10 @@
 #include <poll.h>
 #include <thread>
 #include <atomic>
+#include <nlohmann/json.hpp>
+#include <unordered_map>
+#include <fstream>
+using json = nlohmann::json;
 
 #include "communicate.h"
 
@@ -20,8 +24,33 @@
 #define down "sudo ifconfig can0 down"
 
 uint8_t CANDevice::FIXED_CHECKSUM = 0x6B;
+std::unordered_map<int, std::string> canDescriptions;
+// json文件读取
+bool loadJson(const std::string& filename){
+    std::ifstream f(filename);
+    if (!f.is_open()) {
+        std::cerr << "无法打开 JSON 文件: " << filename << std::endl;
+        return false;
+    }
 
+    json j;
+    f >> j;
 
+    for (auto& [key, value] : j.items()) {
+        int id = std::stoi(key, nullptr, 16);   // "0xF3" → int(0xF3)
+        canDescriptions[id] = value.get<std::string>();
+    }
+    return true;
+}
+
+std::string getDescription(int id){
+    for (const auto& item : canDescriptions) {
+        if (item.first == id) {
+            return item.second;
+        }
+    }
+    return "未知指令";
+}
 
 // CAN通讯初始化
 int can_init(){
@@ -36,6 +65,8 @@ canid_t CANDevice::get_base_id(int addr) {
 }
 // 初始化CAN套接字
 int CANDevice::init_socket(){
+    loadJson("candata.json");
+
     sock_fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
     if (sock_fd < 0) {
         perror("socket create failed");
@@ -95,24 +126,28 @@ void CANDevice::send_packet(canid_t base_id, uint8_t dlc, const uint8_t* data){
 int CANDevice::can_receive(struct can_frame* r_frame, int filter_id){
     if (sock_fd < 0) return -1;
 
+    // 设置 CAN 过滤器
     struct can_filter rfilter;
     rfilter.can_id = get_base_id(filter_id);
     rfilter.can_mask = CAN_SFF_MASK;
 
     setsockopt(sock_fd, SOL_CAN_RAW, CAN_RAW_FILTER, &rfilter, sizeof(rfilter));
 
+    // 使用 select 设置超时1s
     fd_set read_fds;
     FD_ZERO(&read_fds);
     FD_SET(sock_fd, &read_fds);
 
-    struct timeval timeout;
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
+    // struct timeval timeout;
+    // timeout.tv_sec = 1;
+    // timeout.tv_usec = 0;
 
-    int ret = select(sock_fd + 1, &read_fds, nullptr, nullptr, &timeout);
+    // int ret = select(sock_fd + 1, &read_fds, nullptr, nullptr, &timeout);
+    int ret = select(sock_fd + 1, &read_fds, nullptr, nullptr, nullptr);
     if (ret <= 0)
         return -1;
 
+    // 读取 CAN 帧
     int nbytes = read(sock_fd, r_frame, sizeof(struct can_frame));
     if (nbytes < 0) {
         perror("CAN read error");
@@ -152,85 +187,29 @@ int CANDevice::recive_dayin(uint8_t id, int addr, const std::string& controlName
 }
 
 
-
-void CANDevice::start_receive_thread() {
-    if (sock_fd < 0) {
-        std::cout << "sock_fd invalid, cannot start receiver thread!" << std::endl;
-        return;
-    }
-    if (running) return;
-    running = true;
-    recv_thread = std::thread(&CANDevice::receive_loop, this);
-}
-
-void CANDevice::stop_receive_thread() {
-    if (running) {
-        running = false;
-    }
-
-    if (recv_thread.joinable()) {
-        recv_thread.join();
-    }
-}
-
-void CANDevice::receive_loop() {
-    printf("CAN receive thread started.\n");
+void CANDevice::handle_can_receive() {
     
-    struct can_frame response{};
     struct pollfd fds;
-
     fds.fd = sock_fd;
-    fds.events = POLLIN | POLLERR | POLLHUP;
+    fds.events = POLLIN;
 
-    const int TIMEOUT_MS = 60000;  // 60秒
-
-    if (sock_fd < 0) {
-        printf("sock_fd invalid, exit thread.\n");
-        return;
-    }
     while (running) {
+        int ret = poll(&fds, 1, 200);   // 可中断，不死锁
+        if (!running) break;
 
-        int ret = poll(&fds, 1, TIMEOUT_MS);
-
-        if (ret == 0) {  
-            printf("CAN receive timeout (60s), exiting thread.\n");
-            running = false;
-            break;
-        } else if (ret < 0) {
-            perror("poll error");
-            running = false;
-            break;
-        }
-
-        if (fds.revents & (POLLERR | POLLHUP)) {
-            printf("CAN socket closed or error.\n");
-            break;
-        }
-
-        int nbytes = read(sock_fd, &response, sizeof(response));
-        
-        if (nbytes <= 0) {
-            if (nbytes < 0) perror("CAN read error");
-            continue;   // 不退出线程，继续轮询
-        }
-
-        // -------- 业务逻辑部分 --------
-        if (nbytes > 0 && response.can_dlc == 3 && (response.data[0] == 0xFB || response.data[0] == 0xFD)) {
-
-            if (response.data[1] == 0x9F && response.data[2] == FIXED_CHECKSUM) {
-                printf("%s 运动完毕 位置模式\n");
-                running = false;
-                break;
+        if (ret > 0 && (fds.revents & POLLIN)) {
+            struct can_frame response{};
+            can_receive(&response, 8);
+            // 处理接收到的帧
+            if (response.data[1] == 0x02 && response.data[2] == FIXED_CHECKSUM){
+                printf("%d号电机 %s 启动成功\n", response.data[0], getDescription(response.data[0]).c_str());
+            }else if (response.data[1] == 0xE2 && response.data[2] == FIXED_CHECKSUM){
+                printf("%d号电机 %s 条件不满足\n", response.data[0], getDescription(response.data[0]).c_str());
+            }else if (response.data[1] == 0xEE && response.data[2] == FIXED_CHECKSUM){
+                printf("%d号电机 %s 命令错误\n", response.data[0], getDescription(response.data[0]).c_str());
             }
-            else if (response.data[1] == 0xE2 && response.data[2] == FIXED_CHECKSUM) {
-                printf("%s 条件不满足 位置模式\n");
-            }
-        }else if (nbytes > 0 && response.data[0] == 0x00 && response.data[1] == 0xEE && response.data[2] == FIXED_CHECKSUM){
-            printf("%s 命令错误 位置模式\n");
         }
     }
-
-    printf("CAN receive thread stopped.\n");
 }
 
 //----------------------控制动作命令----------------------
@@ -247,7 +226,7 @@ int CANDevice::enable_motor(int addr, bool enable){
         FIXED_CHECKSUM      // 校验
     };
     send_packet(base_id, dlc, data);
-    recive_dayin(0xF3, addr, "电机使能");
+    // recive_dayin(0xF3, addr, "电机使能");
     return 0;
 }
 
@@ -268,7 +247,7 @@ int CANDevice::speed_control(int addr, bool direction, int acc, int rpm, bool mu
         FIXED_CHECKSUM                      // 校验
     };
     send_packet(base_id, dlc, data);
-    recive_dayin(0xF6, addr, "速度模式");
+    // recive_dayin(0xF6, addr, "速度模式");
     return 0;
 }
 
@@ -317,7 +296,7 @@ int CANDevice::position_control_emm(int addr, int rpm, int acceleration, bool di
     can_send(frame1);
     can_send(frame2);
 
-    recive_dayin(0xFD, addr, "位置模式");
+    // recive_dayin(0xFD, addr, "位置模式");
     return 0;
 }
 
@@ -327,11 +306,12 @@ int CANDevice::position_control_x(int addr, bool dir, int rpm, float angle, int 
     uint8_t dlc1 = 8;
     uint8_t dir_val = static_cast<uint8_t>(dir == true ? 0x01 : 0x00);
     int angle_val = static_cast<int>(angle * 10);
+    int rpm_val = rpm * 10;
     uint8_t data1[8] = {
         0xFB,                                               // 功能码
         dir_val,                                            // 方向         --01表示旋转方向为CCW逆时针（00表示CW顺时针）
-        static_cast<uint8_t>(rpm >> 8),                     // 速度高字节
-        static_cast<uint8_t>(rpm & 0xFF),                   // 速度低字节    --05 DC表示速度为0x05DC = 1500(RPM)
+        static_cast<uint8_t>(rpm_val >> 8),                     // 速度高字节
+        static_cast<uint8_t>(rpm_val & 0xFF),                   // 速度低字节    --05 DC表示速度为0x05DC = 1500(RPM)
         static_cast<uint8_t>((angle_val >> 24) & 0xFF),     // 脉冲3         --00 00 7D 00表示脉冲数为0x00007D00 = 32000个
         static_cast<uint8_t>((angle_val >> 16) & 0xFF),     // 脉冲2
         static_cast<uint8_t>((angle_val >> 8) & 0xFF),      // 脉冲1
@@ -394,7 +374,7 @@ int CANDevice::position_control_t_x(int addr, bool dir,int accup, int accdown, i
     send_packet(base_id1, dlc1, data1);
     send_packet(base_id2, dlc2, data2);
 
-    recive_dayin(0xFD, addr, "x梯形加速位置模式");
+    // recive_dayin(0xFD, addr, "x梯形加速位置模式");
     return 0;
 }
 
@@ -409,7 +389,7 @@ int CANDevice::stop_motor(int addr){
         FIXED_CHECKSUM // 校验
     };
     send_packet(base_id, dlc, data);
-    recive_dayin(0xFE, addr, "停止");
+    // recive_dayin(0xFE, addr, "停止");
     return 0;
 }
 
@@ -423,7 +403,7 @@ int CANDevice::clear_all(int addr){
         FIXED_CHECKSUM                      // 校验
     };
     send_packet(base_id, dlc, data);
-    recive_dayin(0x0A, addr, "位置角度清零");
+    // recive_dayin(0x0A, addr, "位置角度清零");
     return 0;
 }
 
@@ -439,7 +419,7 @@ int CANDevice::set_zero(int addr, bool save){
         FIXED_CHECKSUM                      // 校验
     };
     send_packet(base_id, dlc, data);
-    recive_dayin(0x93, addr, "设置单圈回零的零点位置");
+    // recive_dayin(0x93, addr, "设置单圈回零的零点位置");
     return 0;
 }
 
@@ -459,7 +439,7 @@ int CANDevice::run_zero(int addr,int mode, bool multiMachine){
         FIXED_CHECKSUM                      // 校验
     };
     send_packet(base_id, dlc, data);
-    recive_dayin(0x9A, addr, "触发回零");
+    // recive_dayin(0x9A, addr, "触发回零");
     return 0;
 }
 
@@ -476,7 +456,7 @@ int CANDevice::set_division(int addr,bool save, int division){
         FIXED_CHECKSUM                      // 校验
     };
     send_packet(base_id, dlc, data);
-    recive_dayin(0x84, addr, "修改细分");
+    // recive_dayin(0x84, addr, "修改细分");
     return 0;
 }
 
@@ -551,7 +531,7 @@ int CANDevice::set_motor_parameter(int addr, int dangerRpm, int dangerMa, int da
     send_packet(base_id4, dlc4, data4);
     send_packet(base_id5, dlc5, data5);
 
-    recive_dayin(0x48, addr, "修改驱动配置参数");
+    // recive_dayin(0x48, addr, "修改驱动配置参数");
     return 0;
 }
 
@@ -598,7 +578,7 @@ int CANDevice::set_zero_parameter(int addr, int acceleration, int timeout , int 
     send_packet(base_id2, dlc2, data2);
     send_packet(base_id3, dlc3, data3);
 
-    recive_dayin(0x4C, addr, "修改原点回零参数");
+    // recive_dayin(0x4C, addr, "修改原点回零参数");
     return 0;
 }
 
@@ -612,7 +592,7 @@ int CANDevice::close_stall(int addr){
         FIXED_CHECKSUM                      // 校验
     };
     send_packet(base_id, dlc, data);
-    recive_dayin(0x0E, addr, "解除堵转保护");
+    // recive_dayin(0x0E, addr, "解除堵转保护");
     return 0;
 }
 
@@ -626,7 +606,7 @@ int CANDevice::sync_run(){
         FIXED_CHECKSUM // 校验
     };
     send_packet(base_id, dlc, data);
-    recive_dayin(0xFF, 1, "多机同步");
+    // recive_dayin(0xFF, 1, "多机同步");
     return 0;
 }
 

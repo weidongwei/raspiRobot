@@ -10,8 +10,10 @@ int u_set_zero(int addr);
 int u_go(int addr, float angle, int maxI1, int maxI2);
 int u_pickup();
 int u_sync_go(float angle);
-// int run_laser(bool isOpen);
+int run_laser(bool isOpen);
 int run_pump(bool isOpen);
 int takepic();
+
+int test();
 
 #endif // motor_H

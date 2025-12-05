@@ -1,5 +1,6 @@
 #include <opencv2/opencv.hpp>
 #include <unistd.h>
+#include <wiringPi.h>
 
 #include "motor.h"
 #include "communicate.h"
@@ -13,18 +14,20 @@
 #define MAXANGLE 208        //两电机的最大角度范围为208度
 #define ERRORNUM 0.1        //0.1误差
 
+static CANDevice can;
+
 
 
 // 检测电机是否完成运动
 int u_detect_motor(int addr, int maxI1, int maxI2){
     int times = 200, currentMa = 10;
-    times = read_rpm(addr);
+    times = can.read_rpm(addr);
     while(times != 0){
         usleep(100000);
-        times = read_rpm(addr);
-        currentMa = read_ma(addr);
+        times = can.read_rpm(addr);
+        currentMa = can.read_ma(addr);
         if(currentMa > (addr == MOTOR1 ? maxI1 : maxI2)){
-            stop_motor(addr);
+            can.stop_motor(addr);
             printf("%d号电机  碰撞\n", addr);
             return -1;
         }
@@ -36,17 +39,17 @@ int u_detect_motor(int addr, int maxI1, int maxI2){
 // 检测多电机同步是否完成运动
 int u_detect_multi_motor(int maxI1,int maxI2){
     int times1 = 200, times2 = 200, currentMa1 = 10, currentMa2 = 10;
-    times1 = read_rpm(MOTOR1);
-    times2 = read_rpm(MOTOR2);
+    times1 = can.read_rpm(MOTOR1);
+    times2 = can.read_rpm(MOTOR2);
     while(times1 != 0 || times2 != 0){
         usleep(100000);
-        times1 = read_rpm(MOTOR1);
-        times2 = read_rpm(MOTOR2);
-        currentMa1 = read_ma(MOTOR1);
-        currentMa2 = read_ma(MOTOR2);
+        times1 = can.read_rpm(MOTOR1);
+        times2 = can.read_rpm(MOTOR2);
+        currentMa1 = can.read_ma(MOTOR1);
+        currentMa2 = can.read_ma(MOTOR2);
         if(currentMa1 > maxI1 || currentMa2 > maxI2){
-            stop_motor(MOTOR1);
-            stop_motor(MOTOR2);
+            can.stop_motor(MOTOR1);
+            can.stop_motor(MOTOR2);
             printf("双电机  碰撞\n");
             return -1;
         }
@@ -57,35 +60,35 @@ int u_detect_multi_motor(int maxI1,int maxI2){
 
 // 电机走到零点并设置零点
 int u_set_zero(int addr){
-    run_zero(addr, 2, false);
+    can.run_zero(addr, 2, false);
     sleep(1);
     //检测电机是否运动结束
     int times = 200;
-    times = read_rpm(addr);
+    times = can.read_rpm(addr);
     while(times != 0){
         usleep(300000);
-        times = read_rpm(addr);
+        times = can.read_rpm(addr);
     }
     printf("%d号电机  碰撞回零\n", addr);
-    close_stall(addr);
-    position_control_emm(addr, 350, 0, true, 10, true, false);
+    can.close_stall(addr);
+    can.position_control_x(addr, true, 350, 10, 0, false);
     sleep(2);
-    clear_all(addr);
-    set_zero(addr, true);
+    can.clear_all(addr);
+    can.set_zero(addr, true);
     return 0;
 }
 
 // 电机走到某点
 int u_go(int addr, float angle, int maxI1, int maxI2){
     float mainPos = 0, secondaryPos = 0, go_angle = 0;
-    mainPos = read_position(addr, 1);
-    secondaryPos = read_position(addr == MOTOR1 ? MOTOR2 : MOTOR1, 1);
+    mainPos = can.read_position(addr, 1);
+    secondaryPos = can.read_position(addr == MOTOR1 ? MOTOR2 : MOTOR1, 1);
     if(angle < 0 || angle > MAXANGLE + ERRORNUM || angle + secondaryPos > MAXANGLE + ERRORNUM){
         printf("%d号电机  无法到达指定位置\n", addr);
         return -2;
     }
     go_angle = angle - mainPos;
-    position_control_emm(addr, 350, 0, true, go_angle, true, false);
+    can.position_control_x(addr, true, 350, go_angle, 0, false);
     usleep(100000);
     if(u_detect_motor(addr, maxI1, maxI2) == -1){
         return -1;
@@ -97,13 +100,13 @@ int u_go(int addr, float angle, int maxI1, int maxI2){
 // 电机抓取物品
 int u_pickup(){
     float secondaryPos = 0, go_angle = 0;
-    secondaryPos = read_position(MOTOR2, 1);
+    secondaryPos = can.read_position(MOTOR2, 1);
     go_angle = MAXANGLE - secondaryPos;
     printf("go_angle = %0.4f\n", go_angle);
     if(u_go(MOTOR1, go_angle, 250, 250) == -1){
         //夹住后松开2度
         sleep(1);
-        float pos = read_position(MOTOR1, 1);
+        float pos = can.read_position(MOTOR1, 1);
         u_go(MOTOR1, pos - 2, 250, 250);
     }
     return 0;
@@ -112,8 +115,8 @@ int u_pickup(){
 // 抓取物品同步运动(angle是相对于带摄像头夹子的角度)
 int u_sync_go(float angle){
     float pos1 = 0, pos2 = 0, goodSize = 0, goAngle1 = 0, goAngle2 = 0, MaxAngle = 0;
-    pos1 = read_position(MOTOR1, 1);
-    pos2 = read_position(MOTOR2, 1);
+    pos1 = can.read_position(MOTOR1, 1);
+    pos2 = can.read_position(MOTOR2, 1);
     goodSize = MAXANGLE - pos1 - pos2;
     MaxAngle = MAXANGLE - goodSize;
     if(angle < 0 || angle > MaxAngle){
@@ -123,37 +126,37 @@ int u_sync_go(float angle){
     goAngle1 = MAXANGLE - angle - goodSize - pos1;
     goAngle2 = angle - pos2;
     printf("goodSize = %0.2f, goAngle1 = %0.2f, goAngle2 = %0.2f\n", goodSize, goAngle1, goAngle2);
-    position_control_emm(MOTOR1, 350, 0, true, goAngle1, true, true);
-    position_control_emm(MOTOR2, 350, 0, true, goAngle2, true, true);
-    sync_run();
+    can.position_control_x(MOTOR1, true, 350, goAngle1, 0, true);
+    can.position_control_x(MOTOR2, true, 350, goAngle2, 0, true);
+    can.sync_run();
     usleep(100000);
     if(u_detect_multi_motor(400, 400) == -1){
         //对夹住物品的力度变化进行修正
-        pos1 = read_position(MOTOR1, 1);
-        pos2 = read_position(MOTOR2, 1);
+        pos1 = can.read_position(MOTOR1, 1);
+        pos2 = can.read_position(MOTOR2, 1);
         if(goodSize != MAXANGLE - pos1 - pos2){
             float motor1goAngle = (MAXANGLE - pos1 - pos2) - goodSize;
             u_go(MOTOR1, pos1 + motor1goAngle, 400, 400);
         }
         //------------------------------
             sleep(1);
-            pos1 = read_position(MOTOR1, 1);
-            pos2 = read_position(MOTOR2, 1);
+            pos1 = can.read_position(MOTOR1, 1);
+            pos2 = can.read_position(MOTOR2, 1);
             printf("                      xx2 = %0.2f\n", MAXANGLE - pos1 - pos2);
         //------------------------------
         return -1;
     }
     //到达指定位置后对夹住物品的力度变化进行修正
-    pos1 = read_position(MOTOR1, 1);
-    pos2 = read_position(MOTOR2, 1);
+    pos1 = can.read_position(MOTOR1, 1);
+    pos2 = can.read_position(MOTOR2, 1);
     if(goodSize != MAXANGLE - pos1 - pos2){
         float motor1goAngle = (MAXANGLE - pos1 - pos2) - goodSize;
         u_go(MOTOR1, pos1 + motor1goAngle, 400, 400);
     }
     //------------------------------
         sleep(1);
-        pos1 = read_position(MOTOR1, 1);
-        pos2 = read_position(MOTOR2, 1);
+        pos1 = can.read_position(MOTOR1, 1);
+        pos2 = can.read_position(MOTOR2, 1);
         printf("                      xx2 = %0.2f\n", MAXANGLE - pos1 - pos2);
     //------------------------------
     printf("同步运行到指定位置\n");
@@ -162,111 +165,65 @@ int u_sync_go(float angle){
 
 
 
+// 激光控制
+int run_laser(bool isOpen){ 
+    int pin = 13;              // BCM13
+    const int period_us = 2000; // 2ms = 500Hz
+    const float duty_cycle = 0.25;
+
+    wiringPiSetupGpio(); // BCM 模式
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+
+    if (isOpen) {
+        std::cout << "开始 500Hz 手动 PWM 控制激光...\n";
+
+        int high_time = period_us * duty_cycle;
+        int low_time  = period_us - high_time;
+
+        while (true) {
+            digitalWrite(pin, HIGH);
+            std::this_thread::sleep_for(std::chrono::microseconds(high_time));
+
+            digitalWrite(pin, LOW);
+            std::this_thread::sleep_for(std::chrono::microseconds(low_time));
+        }
+    } else {
+        std::cout << "激光关闭\n";
+        digitalWrite(pin, LOW);
+    }
+
+    return 0;
+}
+
+// 电磁阀控制
+int run_pump(bool isOpen){
+     const int pin = 26;
+
+    // 初始化 wiringPi（使用 BCM GPIO 编号）
+    if (wiringPiSetupGpio() < 0) {
+        std::cerr << "无法初始化 wiringPi" << std::endl;
+        return -1;
+    }
+
+    // 设置为输出模式
+    pinMode(pin, OUTPUT);
+
+    // 根据参数控制电平
+    int value = isOpen ? HIGH : LOW;
+    digitalWrite(pin, value);
+
+    std::cout << "[INFO] GPIO " << pin << " 已设置为 "
+              << (isOpen ? "高电平（打开电磁泵）" : "低电平（关闭电磁泵）")
+              << std::endl;
+
+    return 0;
+}
 
 
-// int run_laser(bool isOpen){ 
-//     const char* chipname = "gpiochip0"; 
-//     unsigned int line_num = 13; 
-//     const int period_us = 2000; // PWM周期 4ms 
-//     const float duty_cycle = 0.25; // 占空比 20% 
-    
-//     // 打开GPIO芯片 
-//     gpiod_chip* chip = gpiod_chip_open_by_name(chipname); 
-//     if (!chip) {
-//         std::cerr << "无法打开GPIO芯片\n"; 
-//         return -1; 
-//     } 
-
-//     // 获取GPIO line 
-//     gpiod_line* line = gpiod_chip_get_line(chip, line_num); 
-//     if (!line) { 
-//         std::cerr << "无法获取GPIO线\n";
-//         gpiod_chip_close(chip); 
-//         return -1; 
-//     } 
-    
-//     // 配置为输出，初始值0 
-//     if (gpiod_line_request_output(line, "myapp", 0) < 0) { 
-//         std::cerr << "请求设置GPIO输出失败\n"; 
-//         gpiod_chip_close(chip); 
-//         return 1; 
-//     } 
-
-//     std::cout << "开始控制GPIO13引脚输出高低电平...\n"; 
-
-//     if(isOpen){
-//         //输出高电平 
-//         //gpiod_line_set_value(line, 1); 
-//         while (true) {
-//             int high_time = period_us * duty_cycle;
-//             int low_time  = period_us - high_time;
-
-//             // 高电平
-//             gpiod_line_set_value(line, 1);
-//             std::this_thread::sleep_for(std::chrono::microseconds(high_time));
-
-//             // 低电平
-//             gpiod_line_set_value(line, 0);
-//             std::this_thread::sleep_for(std::chrono::microseconds(low_time));
-//         }
-//         gpiod_line_set_value(line, 0); 
-//     }else{
-//         //输出低电平 
-//         gpiod_line_set_value(line, 0); 
-//     }
-//     // 释放资源 
-//     gpiod_line_release(line); 
-//     gpiod_chip_close(chip); 
-//     return 0; 
-// }
 
 
-// int run_pump(bool isOpen){
-//     const char* chipname = "gpiochip0";
-//     constexpr unsigned int line_num = 26;
-
-//     // 打开 GPIO 芯片
-//     gpiod_chip* chip = gpiod_chip_open_by_name(chipname);
-//     if (!chip) {
-//         std::cerr << "[ERROR] 无法打开 GPIO 芯片: " << chipname << std::endl;
-//         return -1;
-//     }
-
-//     // 获取 GPIO 引脚
-//     gpiod_line* line = gpiod_chip_get_line(chip, line_num);
-//     if (!line) {
-//         std::cerr << "[ERROR] 无法获取 GPIO 引脚: " << line_num << std::endl;
-//         gpiod_chip_close(chip);
-//         return -1;
-//     }
-
-//     // 请求为输出模式（初始为低电平）
-//     if (gpiod_line_request_output(line, "pump_control", 0) < 0) {
-//         std::cerr << "[ERROR] 请求设置 GPIO 输出失败" << std::endl;
-//         gpiod_chip_close(chip);
-//         return -1;
-//     }
-
-//     // 根据参数控制电平
-//     int value = isOpen ? 1 : 0;
-//     if (gpiod_line_set_value(line, value) < 0) {
-//         std::cerr << "[ERROR] 设置 GPIO 电平失败" << std::endl;
-//         gpiod_line_release(line);
-//         gpiod_chip_close(chip);
-//         return -1;
-//     }
-
-//     std::cout << "[INFO] GPIO" << line_num << " 已设置为 "
-//               << (isOpen ? "高电平（打开电磁阀）" : "低电平（关闭电磁阀）") << std::endl;
-
-//     // 释放资源
-//     gpiod_line_release(line);
-//     gpiod_chip_close(chip);
-
-//     return 0;
-// }
-
-
+// 采集图像
 int takepic(){
     std::string save_path = "/home/dw/robot/image/1.jpg";
     cv::VideoCapture cap(0, cv::CAP_V4L2);

@@ -64,7 +64,8 @@ int main(int argc, char* argv[])
         //     laser_thread.join();
         //     camera_thread.join();
         // }
-        // else if(strcmp(control_str, "laser2")==0)             run_laser(false);
+        else if(strcmp(control_str, "laser1")==0)             run_laser(true);
+        else if(strcmp(control_str, "laser2")==0)             run_laser(false);
 
 
 
@@ -83,6 +84,13 @@ int main(int argc, char* argv[])
         else if(strcmp(control_str, "emm")==0)             canDevice.position_control_emm(1, 100, 0, true, 2000, true, false);
         else if(strcmp(control_str, "emm1")==0)            canDevice.position_control_emm(1, 500, 0, true, 2000, true, false);
 
+        
+        else if(strcmp(control_str, "te")==0)             {
+            // canDevice.position_control_x(4, true, 100, 2000, 0, false);
+            canDevice.position_control_x(8, true, 100, 2000, 0, false);
+            // canDevice.position_control_x(7, true, 100, 2000, 0, false);
+        }
+
 
         // //摄像头测试
         // else if(strcmp(control_str, "takepic")==0)      takepic();
@@ -96,7 +104,6 @@ int main(int argc, char* argv[])
         //     sleep(3);         // 保持1秒
         //     run_pump(false);  // 关闭电磁阀
         // }
-        sleep(20);
 
     }
 
