@@ -80,6 +80,7 @@ int main(int argc, char *argv[]){
 
 
         else if(strcmp(argv[1], "test")==0)           {user_57motor();}
+        // 激光控制
         else if(strcmp(argv[1], "laser")==0)           { 
             setLaserStatus((atoi(argv[2])==1) ? true : false); 
             wakeupThreadWait(THR_LASER_CONTROL); 
