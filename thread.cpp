@@ -68,11 +68,10 @@ bool getcanReceiveStatus() {
 
 
 
-// can接收线程函数
+// can接收线程
 void *canReceiveThreadFunc(void* arg) {
     THREADINFO *thisThreadInfo = (THREADINFO *)arg; 
     int id = thisThreadInfo->ID;
-    printf("~~~~接收线程开启~~~~\n");
     while(!beginExit)  { 
         if(threadIsHungup(id)){
             pthread_mutex_lock(&threadLock[id]);
@@ -89,10 +88,32 @@ void *canReceiveThreadFunc(void* arg) {
     }
     //终止线程
     pthread_exit(0);
-
 }
 
-// 激光控制线程函数
+// 电机状态更新线程
+void *motorStatusThreadFunc(void* arg) {
+    THREADINFO *thisThreadInfo = (THREADINFO *)arg; 
+    int id = thisThreadInfo->ID;
+    while(!beginExit)  { 
+        if(threadIsHungup(id)){
+            pthread_mutex_lock(&threadLock[id]);
+            while (threadInfo[id].runningState == THR_HUNGUP && !beginExit) {
+                pthread_cond_wait(&threadCond[id], &threadLock[id]);
+            }
+            pthread_mutex_unlock(&threadLock[id]);
+        }
+        threadInfo[id].runningState = THR_RUN;
+        while(!beginExit) {
+            mMotor[0].update_status();
+            mMotor[1].update_status();
+        }
+        hungupTheThread(id);
+    }
+    //终止线程
+    pthread_exit(0);
+}
+
+// 激光控制线程
 void *laserControlThreadFunc(void* arg){
     THREADINFO *thisThreadInfo = (THREADINFO *)arg; 
     int id = thisThreadInfo->ID;
@@ -116,7 +137,6 @@ void *laserControlThreadFunc(void* arg){
 			pthread_mutex_unlock(&threadLock[id]);
         }
         threadInfo[id].runningState = THR_RUN;
-        printf("~~~激光线程已启动~~~\n");
 
         while (getLaserStatus() == true && !beginExit) {
             digitalWrite(pin, HIGH);
@@ -127,9 +147,31 @@ void *laserControlThreadFunc(void* arg){
         while (getLaserStatus() == false && !beginExit) {
             digitalWrite(pin, LOW);
         }
+        hungupTheThread(id);
     }
-    hungupTheThread(id);
-    printf("~~~激光线程退出~~~\n");
+    //终止线程
+    pthread_exit(0);
+}
+
+// 摄像头拍照线程
+void *photoControlThreadFunc(void* arg){
+    THREADINFO *thisThreadInfo = (THREADINFO *)arg; 
+    int id = thisThreadInfo->ID;
+
+    while(!beginExit)  { 
+        if(threadIsHungup(id)){
+            pthread_mutex_lock(&threadLock[id]);
+            while (threadInfo[id].runningState == THR_HUNGUP && !beginExit) {
+                pthread_cond_wait(&threadCond[id], &threadLock[id]);
+            }
+            pthread_mutex_unlock(&threadLock[id]);
+        }
+        threadInfo[id].runningState = THR_RUN;
+        while ( !beginExit ) {
+            takepic();
+        }
+        hungupTheThread(id);
+    }
     //终止线程
     pthread_exit(0);
 }

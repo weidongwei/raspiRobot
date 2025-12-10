@@ -6,11 +6,11 @@
 #include "communicate.h"
 
 
-#define TOTALTHREADNUM 2   //总的线程数量
+#define TOTALTHREADNUM 4   //总的线程数量
 
 // ---------- 线程方面的定义 ----------
 enum THREADSTATE {THR_HUNGUP, THR_RUN};
-enum THRID {THR_CAN_RECEIVE, THR_LASER_CONTROL};
+enum THRID {THR_CAN_RECEIVE, THR_LASER_CONTROL, THR_PHOTO_CONTROL, THR_MOTOR_STATUS};
 
 struct THREADINFO {
     THRID ID;
@@ -42,6 +42,8 @@ bool getcanReceiveStatus();
 
 // ---------- 线程函数 ----------
 void *canReceiveThreadFunc(void* arg);
+void *motorStatusThreadFunc(void* arg);
 void *laserControlThreadFunc(void* arg);
+void *photoControlThreadFunc(void* arg);
 
 #endif // THREAD_H

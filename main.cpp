@@ -20,12 +20,15 @@ pthread_mutex_t canReceiveMutex;
 
 THREADINFO threadInfo[TOTALTHREADNUM] = { 
     {THR_CAN_RECEIVE, "CANRECEIVE", THR_HUNGUP}, 
-    {THR_LASER_CONTROL, "LASERCONTROL", THR_HUNGUP} 
+    {THR_LASER_CONTROL, "LASERCONTROL", THR_HUNGUP},
+    {THR_PHOTO_CONTROL, "PHOTOCONTROL", THR_HUNGUP},
+    {THR_MOTOR_STATUS, "MOTORSTATUS", THR_HUNGUP}
 };
 
 int main(int argc, char *argv[]){
     // 初始化线程信息
     init_socket();
+
     pthread_t thread[TOTALTHREADNUM];  
     beginExit = false;
     laserStatus = false;
@@ -43,9 +46,12 @@ int main(int argc, char *argv[]){
         int ret;
         if(i == THR_CAN_RECEIVE){
             ret = pthread_create(&thread[i], NULL, canReceiveThreadFunc, (void*)(threadInfo+i));
-        }
-        else if(i == THR_LASER_CONTROL){
+        }else if(i == THR_LASER_CONTROL){
             ret = pthread_create(&thread[i], NULL, laserControlThreadFunc, (void*)(threadInfo+i));
+        }else if(i == THR_PHOTO_CONTROL){
+            ret = pthread_create(&thread[i], NULL, photoControlThreadFunc, (void*)(threadInfo+i));
+        }else if(i == THR_MOTOR_STATUS){
+            ret = pthread_create(&thread[i], NULL, motorStatusThreadFunc, (void*)(threadInfo+i));
         }
         printf("创建线程%s", (threadInfo+i)->name);
         if(ret==0){
@@ -57,6 +63,7 @@ int main(int argc, char *argv[]){
     canReceiveStatus = true;
     sleep(1);
     wakeupThreadWait(THR_CAN_RECEIVE);
+    wakeupThreadWait(THR_MOTOR_STATUS);
     if(argc>1) {
         if(strcmp(argv[1], "emm")==0){
             int motor_id = atoi(argv[2]);
@@ -78,17 +85,27 @@ int main(int argc, char *argv[]){
         else if(strcmp(argv[1], "read_pos")==0)          { int motor_id = atoi(argv[2]); read_position(motor_id,1);}
         else if(strcmp(argv[1], "read_rpm")==0)          { int motor_id = atoi(argv[2]); read_rpm(motor_id);}
 
-
-        else if(strcmp(argv[1], "test")==0)           {user_57motor();}
-        // 激光控制
-        else if(strcmp(argv[1], "laser")==0)           { 
-            setLaserStatus((atoi(argv[2])==1) ? true : false); 
-            wakeupThreadWait(THR_LASER_CONTROL); 
-            sleep (5);
-            enable_motor(5,true);
+        else if(strcmp(argv[1], "pic")==0){ 
+            setLaserStatus(true); 
+            wakeupThreadWait(THR_LASER_CONTROL);
+            wakeupThreadWait(THR_PHOTO_CONTROL);
+            for(int i=0; i<5; i++){
+                sleep(3);
+                position_control_emm(1, 2, 0, true, 45, true, false);
+                position_control_t_x(2, false, 1500, 500, 3000, 360, 0, false);
+                sleep(3);
+                position_control_emm(1, 2, 0, false, 45, true, false);
+                position_control_t_x(2, true, 1500, 500, 3000, 360, 0, false);
+            }
         }
 
-        sleep(60);
+        else if(strcmp(argv[1], "r")==0)          { 
+            wakeupThreadWait(THR_MOTOR_STATUS);
+            sleep(5);
+            enable_motor(1,true);
+        }
+
+        sleep(600);
         return 0;
     }
 

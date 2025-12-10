@@ -6,8 +6,11 @@
 #include <unistd.h>
 #include <cstdint>
 
+#include "motor.h"
+
 extern int can_socket_fd;   // 全局 CAN 套接字
 extern std::string can_ifname; // CAN 接口名，比如 "can0"
+
 
 bool loadJson(const std::string& filename);
 std::string getJson(int id);
@@ -37,7 +40,7 @@ int close_stall(int addr);
 int sync_run();
 // 读取状态命令
 int read_rpm(int addr);
-float read_position(int addr, float gear_ratio);
+int read_position(int addr, float gear_ratio);
 int read_ma(int addr);
 
 #endif // COMMUNICATE_H

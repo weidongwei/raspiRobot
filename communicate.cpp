@@ -18,6 +18,7 @@
 using json = nlohmann::json;
 
 #include "communicate.h"
+#include "motor.h"
 
 #define com "sudo ip link set can0 type can bitrate 1000000"
 #define up "sudo ifconfig can0 up"
@@ -177,6 +178,7 @@ void handle_can_receive() {
                         pos_val = pos / 10.0f;
                     }
                     if (checksum == FIXED_CHECKSUM) {
+                        mMotor[motorID-1].set_position((dir == 0) ? pos_val : -pos_val);
                         printf("%d号电机 实时位置：%.2f°\n", motorID, (dir == 0) ? pos_val : -pos_val);
                     }
                 }else if(response.can_dlc == 5 && cmd == 0x35){ //电机实时转速
@@ -190,12 +192,14 @@ void handle_can_receive() {
                         rpm_val = rpm / 10.0f;
                     }
                     if (checksum == FIXED_CHECKSUM) {
+                        mMotor[motorID-1].set_rpm((dir == 0) ? rpm_val : -rpm_val);
                         printf("%d号电机 实时转速：%.2f rpm\n", motorID, (dir == 0) ? rpm_val : -rpm_val);
                     }
                 }else if(response.can_dlc == 4 && cmd == 0x27){ //电机实时电流
                     uint32_t ma = (response.data[1] << 8) | response.data[2];
                     uint8_t checksum = response.data[3];
                     if (checksum == FIXED_CHECKSUM) {
+                        mMotor[motorID-1].set_ma(ma);
                         printf("%d号电机 实时电流：%d Ma\n", motorID, ma);
                     }
                 }
@@ -591,7 +595,7 @@ int read_rpm(int addr){
 }
 
 // 读取电机实时位置角度
-float read_position(int addr, float gear_ratio) {
+int read_position(int addr, float gear_ratio) {
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 2;
     uint8_t data[] = {

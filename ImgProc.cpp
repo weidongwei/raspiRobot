@@ -16,6 +16,46 @@ cv::Mat distCoeffs = (cv::Mat_<double>(1, 5) <<
     0.003686647866372401, 0.002812744443721311,
     -0.1460461058419775);
 
+// 采集图像
+int takepic(){
+    std::string save_path = "/home/dw/robot/image/1.jpg";
+    cv::VideoCapture cap(0, cv::CAP_V4L2);
+    // cv::VideoCapture cap;
+    // cap.open(0, cv::CAP_V4L2);
+    if (!cap.isOpened()) {
+        std::cerr << "无法打开摄像头" << 0 << std::endl;
+        return false;
+    }
+    cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
+    cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
+    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 3);  // 有的驱动 1=手动，3=自动，需测试
+    // cap.set(cv::CAP_PROP_EXPOSURE, 3000);     // 曝光时间整数us
+    // cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
+    // cap.set(cv::CAP_PROP_BRIGHTNESS, 50);  // 设置亮度为 50(-64 ~ 64)
+
+    cv::Mat frame;
+    cv::waitKey(1000);
+
+
+    while (true) {
+        cap >> frame;
+        if (frame.empty()) {
+            std::cerr << "无法获取图像帧。" << std::endl;
+            break;
+        }
+        cv::imshow("Camera Video", frame);
+        cv::waitKey(10);
+        // cv::imwrite(save_path, frame); 
+        // std::cout << "图像已保存到 " << save_path << std::endl;
+        // sleep(1);
+        // detect_laser_edge(cv::imread("/home/dw/robot/image/1.jpg"));
+        // detect_laser_center(cv::imread("/home/dw/robot/image/1.jpg"));
+    }
+    cap.release();
+    cv::destroyAllWindows();
+    return 0;
+}
+
 
 // 检测图像中的橘子边缘
 int detect_img_edge(cv::Mat src, cv::Mat &out) {
