@@ -172,14 +172,15 @@ void handle_can_receive() {
                     uint32_t pos = (response.data[2] << 24) | (response.data[3] << 16) | (response.data[4] << 8) | response.data[5];
                     uint8_t checksum = response.data[6];
                     float pos_val;
-                    if(motorID == 1 || motorID == 4){
+                    if(motorID == 1 || motorID == 4 || motorID == 8){
                         pos_val = (pos * 360.0f) / 65536.0f;
                     }else{
                         pos_val = pos / 10.0f;
+                        pos_val = angleToDistanceConvert(motorID, pos_val);
                     }
                     if (checksum == FIXED_CHECKSUM) {
                         mMotor[motorID-1].set_position((dir == 0) ? pos_val : -pos_val);
-                        printf("%d号电机 实时位置：%.2f°\n", motorID, (dir == 0) ? pos_val : -pos_val);
+                        // printf("%d号电机 实时位置：%.2f°\n", motorID, (dir == 0) ? pos_val : -pos_val);
                     }
                 }else if(response.can_dlc == 5 && cmd == 0x35){ //电机实时转速
                     uint8_t dir = response.data[1];
@@ -193,14 +194,14 @@ void handle_can_receive() {
                     }
                     if (checksum == FIXED_CHECKSUM) {
                         mMotor[motorID-1].set_rpm((dir == 0) ? rpm_val : -rpm_val);
-                        printf("%d号电机 实时转速：%.2f rpm\n", motorID, (dir == 0) ? rpm_val : -rpm_val);
+                        // printf("%d号电机 实时转速：%.2f rpm\n", motorID, (dir == 0) ? rpm_val : -rpm_val);
                     }
                 }else if(response.can_dlc == 4 && cmd == 0x27){ //电机实时电流
                     uint32_t ma = (response.data[1] << 8) | response.data[2];
                     uint8_t checksum = response.data[3];
                     if (checksum == FIXED_CHECKSUM) {
                         mMotor[motorID-1].set_ma(ma);
-                        printf("%d号电机 实时电流：%d Ma\n", motorID, ma);
+                        // printf("%d号电机 实时电流：%d Ma\n", motorID, ma);
                     }
                 }
             }
@@ -221,6 +222,7 @@ int enable_motor(int addr, bool enable){
         0x00,               // 多机同步标志
         FIXED_CHECKSUM      // 校验
     };
+    printf("----\n");
     send_packet(base_id, dlc, data);
     return 0;
 }

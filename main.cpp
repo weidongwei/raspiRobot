@@ -64,6 +64,7 @@ int main(int argc, char *argv[]){
     sleep(1);
     wakeupThreadWait(THR_CAN_RECEIVE);
     wakeupThreadWait(THR_MOTOR_STATUS);
+    sleep(1);
     if(argc>1) {
         if(strcmp(argv[1], "emm")==0){
             int motor_id = atoi(argv[2]);
@@ -74,35 +75,46 @@ int main(int argc, char *argv[]){
 
         else if(strcmp(argv[1], "x")==0){
             int motor_id = atoi(argv[2]);
-            float angle = atof(argv[3]);
-            bool dir = (angle >=0) ? true : false;
-            position_control_t_x(motor_id, dir, 1500, 500, 3000, abs(angle), 0, false);
+            float distance = atof(argv[3]);
+            screw_motor_move(motor_id, 2000, distance);
+            // position_control_t_x(motor_id, false, 1500, 500, 3000, distance, 0, false);
         }
 
         else if(strcmp(argv[1], "stop")==0)              { int motor_id = atoi(argv[2]); stop_motor(motor_id); }
         else if(strcmp(argv[1], "disable")==0)           { int motor_id = atoi(argv[2]); enable_motor(motor_id,false); }
         else if(strcmp(argv[1], "enable")==0)            { int motor_id = atoi(argv[2]); enable_motor(motor_id,true); }
-        else if(strcmp(argv[1], "read_pos")==0)          { int motor_id = atoi(argv[2]); read_position(motor_id,1);}
-        else if(strcmp(argv[1], "read_rpm")==0)          { int motor_id = atoi(argv[2]); read_rpm(motor_id);}
+        else if(strcmp(argv[1], "read_pos")==0)          { int motor_id = atoi(argv[2]); printf("%d号电机 pos=%.2f\n",motor_id, mMotor[motor_id - 1].get_position());}
+        else if(strcmp(argv[1], "read_rpm")==0)          { int motor_id = atoi(argv[2]); printf("%d号电机 rpm=%d\n",motor_id, mMotor[motor_id - 1].get_rpm());}
+        else if(strcmp(argv[1], "read_ma")==0)           { int motor_id = atoi(argv[2]); printf("%d号电机 ma=%d\n",motor_id, mMotor[motor_id - 1].get_ma());}
 
-        else if(strcmp(argv[1], "pic")==0){ 
+        else if(strcmp(argv[1], "test1")==0){ 
             setLaserStatus(true); 
             wakeupThreadWait(THR_LASER_CONTROL);
             wakeupThreadWait(THR_PHOTO_CONTROL);
             for(int i=0; i<5; i++){
                 sleep(3);
-                position_control_emm(1, 2, 0, true, 45, true, false);
-                position_control_t_x(2, false, 1500, 500, 3000, 360, 0, false);
+                position_control_emm(1, atoi(argv[2]), atoi(argv[4]), true, atoi(argv[3]), true, false);
+                // position_control_t_x(2, false, 1500, 500, 3000, 360, 0, false);
                 sleep(3);
-                position_control_emm(1, 2, 0, false, 45, true, false);
-                position_control_t_x(2, true, 1500, 500, 3000, 360, 0, false);
+                position_control_emm(1, atoi(argv[2]), atoi(argv[4]), false, atoi(argv[3]), true, false);
+                // position_control_t_x(2, true, 1500, 500, 3000, 360, 0, false);
             }
         }
 
-        else if(strcmp(argv[1], "r")==0)          { 
-            wakeupThreadWait(THR_MOTOR_STATUS);
-            sleep(5);
-            enable_motor(1,true);
+        else if(strcmp(argv[1], "test2")==0){
+            setLaserStatus(true); 
+            wakeupThreadWait(THR_LASER_CONTROL);
+            wakeupThreadWait(THR_PHOTO_CONTROL);
+            for(int i=0; i<5; i++){
+                sleep(3);
+                position_control_t_x(2, true, 1500, 500, 3000, atoi(argv[2]), 0, false);
+                sleep(3);
+                position_control_t_x(2, false, 1500, 500, 3000, atoi(argv[2]), 0, false);
+            }
+        }
+
+        else if(strcmp(argv[1], "zero")==0){
+            initmotor(atoi(argv[2]));
         }
 
         sleep(600);

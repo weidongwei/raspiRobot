@@ -7,8 +7,10 @@
 
 #define TOTALMOTORNUM 8   //总的电机数量
 
-// 电磁阀控制
-int run_pump(bool isOpen);
+int initmotor(int addr);
+float angleToDistanceConvert(int motor_id, float angle);
+float distanceToAngleConvert(int motor_id, float distance);
+int screw_motor_move(int addr, int rpm, float distance);
 
 class Motor{
 private:
@@ -29,9 +31,13 @@ public:
     float get_position();
     int get_rpm();
     int get_ma();
+    int get_screwPitch();
 };
 extern Motor mMotor[TOTALMOTORNUM];
 
+
+// 电磁阀控制
+int run_pump(bool isOpen);
 
 
 
