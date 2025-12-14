@@ -75,9 +75,9 @@ int main(int argc, char *argv[]){
 
         else if(strcmp(argv[1], "x")==0){
             int motor_id = atoi(argv[2]);
-            float distance = atof(argv[3]);
-            screw_motor_move(motor_id, 2000, distance);
-            // position_control_t_x(motor_id, false, 1500, 500, 3000, distance, 0, false);
+            float angle = atof(argv[3]);
+            bool dir = (angle >=0) ? true : false;
+            position_control_t_x(motor_id, dir, 1500, 500, 3000, abs(angle), 0, false);
         }
 
         else if(strcmp(argv[1], "stop")==0)              { int motor_id = atoi(argv[2]); stop_motor(motor_id); }
@@ -115,6 +115,12 @@ int main(int argc, char *argv[]){
 
         else if(strcmp(argv[1], "zero")==0){
             initmotor(atoi(argv[2]));
+        }
+
+        else if(strcmp(argv[1], "screw_move")==0){
+            int motor_id = atoi(argv[2]);
+            float distance = atof(argv[3]);
+            screw_motor_move(motor_id, distance);
         }
 
         sleep(600);

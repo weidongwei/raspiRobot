@@ -14,7 +14,7 @@ int initmotor(int addr){
     run_zero(addr, 2, false);
     sleep(1);
     while(mMotor[addr - 1].get_rpm() != 0){sleep(1);}
-    position_control_t_x(addr, false, 1500, 500, 3000, 1440, 0, false);
+    position_control_t_x(addr, true, 1500, 500, 3000, distanceToAngleConvert(addr, 80), 0, false);
     sleep(1);
     while(mMotor[addr - 1].get_rpm() != 0){sleep(1);}
     clear_all(addr);
@@ -22,23 +22,32 @@ int initmotor(int addr){
 }
 
 // 丝杆电机运动函数
-int screw_motor_move(int addr, int rpm, float distance){
+int screw_motor_move(int addr, float distance){
+    float cur_pos = mMotor[addr - 1].get_position();
+    float up_limit = mMotor[addr - 1].get_up_limit_pos();
+    float low_limit = mMotor[addr - 1].get_low_limit_pos();
+    int rpm = mMotor[addr - 1].get_max_rpm();
+    float  target_pos = cur_pos + distance;
+    if(target_pos > up_limit || target_pos < low_limit){
+        printf("%d 号电机 目标位置超出限位范围！\n", addr);
+        return -1;
+    }
     float angle = distanceToAngleConvert(addr, distance);
     bool dir = (angle >=0) ? true : false;
-    position_control_t_x(addr, dir, 1500, 500, rpm, angle, 0, false);
+    position_control_t_x(addr, dir, 1500, 500, rpm, abs(angle), 0, false);
     return 0;
 }
 
 // 丝杆电机导程转换(角度->前进距离)
 float angleToDistanceConvert(int motor_id, float angle){
-    int pitch = mMotor[motor_id - 1].get_screwPitch();
-    return static_cast<float>((angle / 360.0f) * 8.0f);
+    int screwPitch = mMotor[motor_id - 1].get_screwPitch();
+    return static_cast<float>((angle / 360.0f) * screwPitch);
 }
 
 // 丝杆电机导程转换(前进距离->角度)
 float distanceToAngleConvert(int motor_id, float distance){
-    int pitch = mMotor[motor_id - 1].get_screwPitch();
-    return static_cast<float>((distance / 8.0f) * 360.0f);
+    int screwPitch = mMotor[motor_id - 1].get_screwPitch();
+    return static_cast<float>((distance / screwPitch) * 360.0f);
 }
 
 
@@ -58,13 +67,23 @@ void Motor::update_status(){
     usleep(300000);  // 300ms 间隔
 }
 
+void Motor::set_motor_id(int id){ this->motor_id = id; }
+void Motor::set_max_rpm(int rpm){ this->max_rpm = rpm; }
+void Motor::set_up_limit_pos(float pos){ this->up_limit_pos = pos; }
+void Motor::set_low_limit_pos(float pos){ this->low_limit_pos = pos; }
+void Motor::set_screwPitch(int pitch){ this->screwPitch = pitch; }
 void Motor::set_position(float pos){ this->current_pos = pos;}
 void Motor::set_rpm(int rpm){ this->current_rpm = rpm;}
 void Motor::set_ma(int ma){ this->current_ma = ma;}
+
+int Motor::get_motor_id(){ return this->motor_id; }
+int Motor::get_max_rpm(){ return this->max_rpm; }
+float Motor::get_up_limit_pos(){ return this->up_limit_pos; }
+float Motor::get_low_limit_pos(){ return this->low_limit_pos; }
+int Motor::get_screwPitch(){ return this->screwPitch; }
 float Motor::get_position(){ return this->current_pos; }
 int Motor::get_rpm(){ return this->current_rpm; }
 int Motor::get_ma(){ return this->current_ma; }
-int Motor::get_screwPitch(){ return this->screwPitch; }
 
 
 // 电磁阀控制

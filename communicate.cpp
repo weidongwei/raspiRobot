@@ -28,8 +28,8 @@ uint8_t FIXED_CHECKSUM = 0x6B;
 int can_socket_fd = -1;
 std::string can_ifname = "can0";     // 默认 can0
 int running = 1;                     // CAN 接收线程运行标志
-std::unordered_map<int, std::string> canDescriptions;
 
+std::unordered_map<int, std::string> canDescriptions;
 
 // json文件读取
 bool loadJson(const std::string& filename){
@@ -41,10 +41,20 @@ bool loadJson(const std::string& filename){
 
     json j;
     f >> j;
-
-    for (auto& [key, value] : j.items()) {
+    // 获取json中candata内容
+    for (auto& [key, value] : j["candata"].items()) {
         int id = std::stoi(key, nullptr, 0);  // 自动识别 0x 前缀
         canDescriptions[id] = value.get<std::string>();
+    }
+    // 获取json中motordata内容
+    for (size_t i = 0; i < j["motordata"].size(); ++i) {
+        const json& m = j["motordata"][i];
+
+        mMotor[i].set_motor_id(m.value("电机id", 0) - 1);
+        mMotor[i].set_max_rpm(m.value("最大速度", 0));
+        mMotor[i].set_up_limit_pos(m.value("上限位置", 0.0f));
+        mMotor[i].set_low_limit_pos(m.value("下限位置", 0.0f));
+        mMotor[i].set_screwPitch(m.value("丝杠导程", 0));
     }
 
     return true;
@@ -71,7 +81,7 @@ canid_t get_base_id(int addr) {
 }
 // 初始化CAN套接字
 int init_socket(){
-    loadJson("candata.json");
+    loadJson("data.json");
 
     struct ifreq ifr {};
     struct sockaddr_can addr{};
@@ -187,7 +197,7 @@ void handle_can_receive() {
                     uint32_t rpm = (response.data[2] << 8) | response.data[3];
                     uint8_t checksum = response.data[4];
                     float rpm_val;
-                    if(motorID == 1 || motorID == 4){
+                    if(motorID == 1 || motorID == 4 || motorID == 8){
                         rpm_val = rpm;
                     }else{
                         rpm_val = rpm / 10.0f;
@@ -324,7 +334,7 @@ int position_control_x(int addr, bool dir, int rpm, float angle, int mode, bool 
 int position_control_t_x(int addr, bool dir,int accup, int accdown, int rpm, float angle, int mode, bool multiMachine){
     canid_t base_id1 = get_base_id(addr);
     uint8_t dlc1 = 8;
-    uint8_t dir_val = static_cast<uint8_t>(dir == true ? 0x01 : 0x00);
+    uint8_t dir_val = static_cast<uint8_t>(dir == true ? 0x00 : 0x01);
     int angle_val = static_cast<int>(angle * 10);
     uint8_t data1[8] = {
         0xFD,                                               // 功能码
