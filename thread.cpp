@@ -106,6 +106,7 @@ void *motorStatusThreadFunc(void* arg) {
         while(!beginExit) {
             mMotor[0].update_status();
             mMotor[1].update_status();
+            mMotor[6].update_status();
         }
         hungupTheThread(id);
     }

@@ -262,7 +262,7 @@ int speed_control(int addr, bool direction, int acc, int rpm, bool multiMachine)
 int position_control_emm(int addr, int rpm, int acceleration, bool dir, float pulses, bool absolute, bool multiMachine){
     canid_t base_id1 = get_base_id(addr);
     uint8_t dlc1 = 8;
-    uint8_t dir_val = static_cast<uint8_t>(dir == true ? 0x01 : 0x00);
+    uint8_t dir_val = static_cast<uint8_t>(dir == true ? 0x00 : 0x01);
     int pulses_val = abs(pulses) / 360 * 200 * 16 * 1;
     uint8_t data1[8] = {
         0xFD,                                           // 功能码

@@ -11,6 +11,7 @@ int initmotor(int addr);
 float angleToDistanceConvert(int motor_id, float angle);
 float distanceToAngleConvert(int motor_id, float distance);
 int screw_motor_move(int addr, float distance);
+int emm_motor_move(int addr, float angle);
 
 class Motor{
 private:

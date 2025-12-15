@@ -117,10 +117,24 @@ int main(int argc, char *argv[]){
             initmotor(atoi(argv[2]));
         }
 
+        else if(strcmp(argv[1], "zero2")==0){
+            run_zero(7,2,false);
+        }
+
         else if(strcmp(argv[1], "screw_move")==0){
             int motor_id = atoi(argv[2]);
             float distance = atof(argv[3]);
             screw_motor_move(motor_id, distance);
+        }
+
+        else if(strcmp(argv[1], "emm_move")==0){
+            int motor_id = atoi(argv[2]);
+            float angle = atof(argv[3]);
+            emm_motor_move(motor_id, angle);
+        }
+
+        else if(strcmp(argv[1], "takepic")==0){
+            wakeupThreadWait(THR_PHOTO_CONTROL);
         }
 
         sleep(600);

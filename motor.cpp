@@ -9,7 +9,21 @@
 #include "ImgProc.h"
 
 // ----------------------电机运动控制----------------------
-// 电机初始化碰撞回零
+
+// 丝杆电机导程转换(角度->前进距离)
+float angleToDistanceConvert(int motor_id, float angle){
+    int screwPitch = mMotor[motor_id - 1].get_screwPitch();
+    return static_cast<float>((angle / 360.0f) * screwPitch);
+}
+
+// 丝杆电机导程转换(前进距离->角度)
+float distanceToAngleConvert(int motor_id, float distance){
+    int screwPitch = mMotor[motor_id - 1].get_screwPitch();
+    printf("screwPitch = %d\n", screwPitch);
+    return static_cast<float>((distance / screwPitch) * 360.0f);
+}
+
+// 丝杆电机初始化碰撞回零
 int initmotor(int addr){
     run_zero(addr, 2, false);
     sleep(1);
@@ -28,6 +42,7 @@ int screw_motor_move(int addr, float distance){
     float low_limit = mMotor[addr - 1].get_low_limit_pos();
     int rpm = mMotor[addr - 1].get_max_rpm();
     float  target_pos = cur_pos + distance;
+    printf("当前位置 = %.2f, 目标位置 = %.2f, up_limit = %.2f, low_limit = %.2f\n", cur_pos, target_pos, up_limit, low_limit);
     if(target_pos > up_limit || target_pos < low_limit){
         printf("%d 号电机 目标位置超出限位范围！\n", addr);
         return -1;
@@ -38,17 +53,24 @@ int screw_motor_move(int addr, float distance){
     return 0;
 }
 
-// 丝杆电机导程转换(角度->前进距离)
-float angleToDistanceConvert(int motor_id, float angle){
-    int screwPitch = mMotor[motor_id - 1].get_screwPitch();
-    return static_cast<float>((angle / 360.0f) * screwPitch);
+// 57电机运动函数
+int emm_motor_move(int addr, float angle){
+    float cur_pos = mMotor[addr - 1].get_position();
+    float up_limit = mMotor[addr - 1].get_up_limit_pos();
+    float low_limit = mMotor[addr - 1].get_low_limit_pos();
+    int rpm = mMotor[addr - 1].get_max_rpm();
+    float  target_pos = cur_pos + angle;
+    printf("当前位置 = %.2f, 目标位置 = %.2f, up_limit = %.2f, low_limit = %.2f\n", cur_pos, target_pos, up_limit, low_limit);
+    if(target_pos > up_limit || target_pos < low_limit){
+        printf("%d 号电机 目标位置超出限位范围！\n", addr);
+        return -1;
+    }
+    bool dir = (angle >=0) ? true : false;
+    position_control_emm(addr, rpm, 0, dir, abs(angle), true, false);
+    return 0;
 }
 
-// 丝杆电机导程转换(前进距离->角度)
-float distanceToAngleConvert(int motor_id, float distance){
-    int screwPitch = mMotor[motor_id - 1].get_screwPitch();
-    return static_cast<float>((distance / screwPitch) * 360.0f);
-}
+
 
 
 
