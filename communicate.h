@@ -25,6 +25,7 @@ int can_receive(struct can_frame* r_frame);
 void handle_can_receive();
 // 控制动作命令
 int enable_motor(int addr, bool enable);
+int time_return(int addr, int time);
 int speed_control(int addr, bool direction, int acc, int rpm, bool multiMachine);
 int position_control_emm(int addr, int rpm, int acceleration, bool dir, float pulses, bool absolute, bool multiMachine);
 int position_control_x(int addr, bool dir, int rpm, float angle, int mode, bool multiMachine);

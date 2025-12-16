@@ -66,7 +66,14 @@ int main(int argc, char *argv[]){
     wakeupThreadWait(THR_MOTOR_STATUS);
     sleep(1);
     if(argc>1) {
-        if(strcmp(argv[1], "emm")==0){
+        if(strcmp(argv[1], "stop")==0)              { int motor_id = atoi(argv[2]); stop_motor(motor_id); }
+        else if(strcmp(argv[1], "disable")==0)           { int motor_id = atoi(argv[2]); enable_motor(motor_id,false); }
+        else if(strcmp(argv[1], "enable")==0)            { int motor_id = atoi(argv[2]); enable_motor(motor_id,true); }
+        else if(strcmp(argv[1], "read_pos")==0)          { int motor_id = atoi(argv[2]); printf("%d号电机 pos=%.2f\n",motor_id, mMotor[motor_id - 1].get_position());}
+        else if(strcmp(argv[1], "read_rpm")==0)          { int motor_id = atoi(argv[2]); printf("%d号电机 rpm=%d\n",motor_id, mMotor[motor_id - 1].get_rpm());}
+        else if(strcmp(argv[1], "read_ma")==0)           { int motor_id = atoi(argv[2]); printf("%d号电机 ma=%d\n",motor_id, mMotor[motor_id - 1].get_ma());}
+        
+        else if(strcmp(argv[1], "emm")==0){
             int motor_id = atoi(argv[2]);
             float angle = atof(argv[3]);
             bool dir = (angle >=0) ? true : false;
@@ -80,12 +87,7 @@ int main(int argc, char *argv[]){
             position_control_t_x(motor_id, dir, 1500, 500, 3000, abs(angle), 0, false);
         }
 
-        else if(strcmp(argv[1], "stop")==0)              { int motor_id = atoi(argv[2]); stop_motor(motor_id); }
-        else if(strcmp(argv[1], "disable")==0)           { int motor_id = atoi(argv[2]); enable_motor(motor_id,false); }
-        else if(strcmp(argv[1], "enable")==0)            { int motor_id = atoi(argv[2]); enable_motor(motor_id,true); }
-        else if(strcmp(argv[1], "read_pos")==0)          { int motor_id = atoi(argv[2]); printf("%d号电机 pos=%.2f\n",motor_id, mMotor[motor_id - 1].get_position());}
-        else if(strcmp(argv[1], "read_rpm")==0)          { int motor_id = atoi(argv[2]); printf("%d号电机 rpm=%d\n",motor_id, mMotor[motor_id - 1].get_rpm());}
-        else if(strcmp(argv[1], "read_ma")==0)           { int motor_id = atoi(argv[2]); printf("%d号电机 ma=%d\n",motor_id, mMotor[motor_id - 1].get_ma());}
+        
 
         else if(strcmp(argv[1], "test1")==0){ 
             setLaserStatus(true); 
@@ -102,7 +104,7 @@ int main(int argc, char *argv[]){
         }
 
         else if(strcmp(argv[1], "test2")==0){
-            setLaserStatus(true); 
+            setLaserStatus(true);
             wakeupThreadWait(THR_LASER_CONTROL);
             wakeupThreadWait(THR_PHOTO_CONTROL);
             for(int i=0; i<5; i++){
@@ -115,10 +117,6 @@ int main(int argc, char *argv[]){
 
         else if(strcmp(argv[1], "zero")==0){
             initmotor(atoi(argv[2]));
-        }
-
-        else if(strcmp(argv[1], "zero2")==0){
-            run_zero(7,2,false);
         }
 
         else if(strcmp(argv[1], "screw_move")==0){
@@ -136,6 +134,13 @@ int main(int argc, char *argv[]){
         else if(strcmp(argv[1], "takepic")==0){
             wakeupThreadWait(THR_PHOTO_CONTROL);
         }
+
+        else if(strcmp(argv[1], "imgproc")==0){
+            putouttime();
+            // detect_laser_center(cv::imread("/home/dw/robot/image/2.jpg"));
+        }
+
+
 
         sleep(600);
         return 0;

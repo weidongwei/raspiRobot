@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <time.h>
 #include <vector>
+#include <chrono>
+#include <ctime>
 
 
 
@@ -311,6 +313,20 @@ int detect_laser_center(cv::Mat img) {
     std::cout << "激光中心线检测完成。" << std::endl;
     return 0;
 }
+
+int putouttime(){
+    // 1. 获取当前系统时间（高精度，纳秒级）
+    auto now = std::chrono::system_clock::now();
+
+    // 2. 转换为时间戳（秒级，兼容传统time_t）
+    std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
+
+    // 3. 输出本地时间（基础格式）
+    std::cout << "当前时间（基础格式）：" << std::ctime(&currentTime);
+    
+    return 0;
+}
+
 
 
 

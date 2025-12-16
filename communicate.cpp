@@ -237,6 +237,23 @@ int enable_motor(int addr, bool enable){
     return 0;
 }
 
+// 定时返回
+int time_return(int addr, int time){   
+    canid_t base_id = get_base_id(addr);
+    uint8_t dlc = 6;
+    uint8_t data[] = {
+        0x11,               // 命令
+        0x18,               // 固定标识
+        0x36,               // 使能状态
+        static_cast<uint8_t>((time >> 8) & 0xFF),//定时返回时间（ms）
+        static_cast<uint8_t>(time & 0xFF),
+        FIXED_CHECKSUM      // 校验
+    };
+    printf("----\n");
+    send_packet(base_id, dlc, data);
+    return 0;
+}
+
 // 速度模式控制
 // speed_control(MOTOR1, true, 350, 10, false);
 int speed_control(int addr, bool direction, int acc, int rpm, bool multiMachine){
