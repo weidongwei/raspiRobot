@@ -237,7 +237,7 @@ int enable_motor(int addr, bool enable){
     return 0;
 }
 
-// 定时返回
+// 定时返回Y42/57
 int time_return(int addr, int time){   
     canid_t base_id = get_base_id(addr);
     uint8_t dlc = 6;

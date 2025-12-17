@@ -109,8 +109,9 @@ int Motor::get_ma(){ return this->current_ma; }
 
 
 // 电磁阀控制
-int run_pump(bool isOpen){
-     const int pin = 26;
+int run_pump(float time){
+    const int pin = 13;
+    int time_int = static_cast<int>(time * 1000000); // 转换为微秒
 
     // 初始化 wiringPi（使用 BCM GPIO 编号）
     if (wiringPiSetupGpio() < 0) {
@@ -119,14 +120,14 @@ int run_pump(bool isOpen){
     }
 
     // 设置为输出模式
-    pinMode(pin, OUTPUT);
+    pinMode(pin, OUTPUT); 
 
-    // 根据参数控制电平
-    int value = isOpen ? HIGH : LOW;
-    digitalWrite(pin, value);
+    digitalWrite(pin, HIGH);
+    usleep(time_int);
+    digitalWrite(pin, LOW);
 
-    std::cout << "[INFO] GPIO " << pin << " 已设置为 "
-              << (isOpen ? "高电平（打开电磁泵）" : "低电平（关闭电磁泵）")
+ 
+    std::cout << "[INFO] GPIO " << pin << " 已打开电磁阀 " << time << " 秒"
               << std::endl;
 
     return 0;

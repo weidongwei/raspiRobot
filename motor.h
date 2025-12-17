@@ -49,7 +49,7 @@ extern Motor mMotor[TOTALMOTORNUM];
 
 
 // 电磁阀控制
-int run_pump(bool isOpen);
+int run_pump(float time);
 
 
 

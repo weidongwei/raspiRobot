@@ -63,7 +63,7 @@ int main(int argc, char *argv[]){
     canReceiveStatus = true;
     sleep(1);
     wakeupThreadWait(THR_CAN_RECEIVE);
-    wakeupThreadWait(THR_MOTOR_STATUS);
+    // wakeupThreadWait(THR_MOTOR_STATUS);
     sleep(1);
     if(argc>1) {
         if(strcmp(argv[1], "stop")==0)              { int motor_id = atoi(argv[2]); stop_motor(motor_id); }
@@ -135,7 +135,12 @@ int main(int argc, char *argv[]){
             wakeupThreadWait(THR_PHOTO_CONTROL);
         }
 
-        else if(strcmp(argv[1], "imgproc")==0){
+        else if(strcmp(argv[1], "pump")==0){
+            int time = atoi(argv[2]);
+            run_pump(time);
+        }
+
+        else if(strcmp(argv[1], "imgproc")==0){  
             putouttime();
             // detect_laser_center(cv::imread("/home/dw/robot/image/2.jpg"));
         }
