@@ -136,15 +136,13 @@ int main(int argc, char *argv[]){
         }
 
         else if(strcmp(argv[1], "pump")==0){
-            int time = atoi(argv[2]);
+            float time = atof(argv[2]);
             run_pump(time);
         }
 
-        else if(strcmp(argv[1], "imgproc")==0){  
-            putouttime();
-            // detect_laser_center(cv::imread("/home/dw/robot/image/2.jpg"));
+        else if(strcmp(argv[1], "imgproc")==0){
+            detect_laser_center(cv::imread("/home/dw/robot/image/origin_image/2.jpg"));
         }
-
 
 
         sleep(600);

@@ -127,7 +127,7 @@ int run_pump(float time){
     digitalWrite(pin, LOW);
 
  
-    std::cout << "[INFO] GPIO " << pin << " 已打开电磁阀 " << time << " 秒"
+    std::cout << "[INFO] GPIO " << pin << " 已打开电磁阀 " << time_int << " 微秒"
               << std::endl;
 
     return 0;

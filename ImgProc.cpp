@@ -18,9 +18,27 @@ cv::Mat distCoeffs = (cv::Mat_<double>(1, 5) <<
     0.003686647866372401, 0.002812744443721311,
     -0.1460461058419775);
 
+// 获取当前时间字符串
+std::string getTimeString(){
+    // 1. 获取当前系统时间（高精度，纳秒级）
+    auto now = std::chrono::system_clock::now();
+
+    // 2. 转换为时间戳（秒级，兼容传统time_t）
+    std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
+
+    // 3. 转为本地时间（线程安全）
+    std::tm tm_time;
+    localtime_r(&currentTime, &tm_time);
+
+    std::ostringstream oss;
+    oss << std::put_time(&tm_time, "%Y%m%d_%H%M%S");
+    return oss.str();
+}
 // 采集图像
 int takepic(){
-    std::string save_path = "/home/dw/robot/image/1.jpg";
+    std::string base_path = "/home/dw/robot/image/origin_image/";
+    std::string filename  = "origin_" + getTimeString() + ".jpg";
+    std::string save_path = base_path + filename;
     cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
@@ -306,26 +324,21 @@ int detect_laser_center(cv::Mat img) {
         }
     }
 
+    
+    std::string base_path = "/home/dw/robot/image/proc_image/";
+    std::string filename1  = "laser_center_detected" + getTimeString() + ".jpg";
+    std::string filename2  = "laser_center_mask" + getTimeString() + ".jpg";
+    std::string save_path1 = base_path + filename1;
+    std::string save_path2 = base_path + filename2;
     // 7️⃣ 保存结果
-    cv::imwrite("/home/dw/robot/image/laser_center_detected.jpg", img_with_contours);
-    cv::imwrite("/home/dw/robot/image/laser_center_mask.jpg", mask_center);
+    cv::imwrite(save_path1, img_with_contours);
+    cv::imwrite(save_path2, mask_center);
 
     std::cout << "激光中心线检测完成。" << std::endl;
     return 0;
 }
 
-int putouttime(){
-    // 1. 获取当前系统时间（高精度，纳秒级）
-    auto now = std::chrono::system_clock::now();
 
-    // 2. 转换为时间戳（秒级，兼容传统time_t）
-    std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
-
-    // 3. 输出本地时间（基础格式）
-    std::cout << "当前时间（基础格式）：" << std::ctime(&currentTime);
-    
-    return 0;
-}
 
 
 
