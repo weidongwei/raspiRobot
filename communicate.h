@@ -32,16 +32,24 @@ int position_control_x(int addr, bool dir, int rpm, float angle, int mode, bool 
 int position_control_t_x(int addr, bool dir,int accup, int accdown, int rpm, float angle, int mode, bool multiMachine);
 int stop_motor(int addr);
 int clear_all(int addr);
-int set_zero(int addr, bool save);
 int run_zero(int addr,int mode, bool multiMachine);
-int set_division(int addr,bool save, int division);
-int set_motor_parameter(int addr, int dangerRpm, int dangerMa, int dangerTime);
-int set_zero_parameter(int addr, int acceleration, int timeout , int dangerRpm, int dangerMa, int dangerTime);
 int close_stall(int addr);
 int sync_run();
+// 修改参数命令
+int set_division(int addr,bool save, int division);
+int set_motor_parameter_emm(int addr, int dangerRpm, int dangerMa, int dangerTime);
+int set_motor_parameter_x(int addr);
+int set_zero(int addr, bool save);
+int set_zero_parameter(int addr, int acceleration, int timeout , int dangerRpm, int dangerMa, int dangerTime);
 // 读取状态命令
 int read_rpm(int addr);
 int read_position(int addr, float gear_ratio);
 int read_ma(int addr);
+int read_motor_parameter_x(int addr);
+// 处理读取命令返回的can报文
+int process_read_rpm(can_frame response, uint8_t motorID);
+int process_read_position(can_frame response, uint8_t motorID);
+int process_read_ma(can_frame response, uint8_t motorID);
+int process_read_motor_parameter_x(can_frame response, uint8_t motorID);
 
 #endif // COMMUNICATE_H

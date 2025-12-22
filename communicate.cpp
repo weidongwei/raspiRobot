@@ -178,48 +178,20 @@ void handle_can_receive() {
                             printf("%d号电机 %s 命令错误\n", motorID, getJson(cmd).c_str());
                     }
                 }else if(response.can_dlc == 7 && cmd == 0x36){ //电机实时位置
-                    uint8_t dir = response.data[1];
-                    uint32_t pos = (response.data[2] << 24) | (response.data[3] << 16) | (response.data[4] << 8) | response.data[5];
-                    uint8_t checksum = response.data[6];
-                    float pos_val;
-                    if(motorID == 1 || motorID == 4 || motorID == 8){
-                        pos_val = (pos * 360.0f) / 65536.0f;
-                    }else{
-                        pos_val = pos / 10.0f;
-                        pos_val = angleToDistanceConvert(motorID, pos_val);
-                    }
-                    if (checksum == FIXED_CHECKSUM) {
-                        mMotor[motorID-1].set_position((dir == 0) ? pos_val : -pos_val);
-                        // printf("%d号电机 实时位置：%.2f°\n", motorID, (dir == 0) ? pos_val : -pos_val);
-                    }
+                    process_read_position(response, motorID);
                 }else if(response.can_dlc == 5 && cmd == 0x35){ //电机实时转速
-                    uint8_t dir = response.data[1];
-                    uint32_t rpm = (response.data[2] << 8) | response.data[3];
-                    uint8_t checksum = response.data[4];
-                    float rpm_val;
-                    if(motorID == 1 || motorID == 4 || motorID == 8){
-                        rpm_val = rpm;
-                    }else{
-                        rpm_val = rpm / 10.0f;
-                    }
-                    if (checksum == FIXED_CHECKSUM) {
-                        mMotor[motorID-1].set_rpm((dir == 0) ? rpm_val : -rpm_val);
-                        // printf("%d号电机 实时转速：%.2f rpm\n", motorID, (dir == 0) ? rpm_val : -rpm_val);
-                    }
+                    process_read_rpm(response, motorID);
                 }else if(response.can_dlc == 4 && cmd == 0x27){ //电机实时电流
-                    uint32_t ma = (response.data[1] << 8) | response.data[2];
-                    uint8_t checksum = response.data[3];
-                    if (checksum == FIXED_CHECKSUM) {
-                        mMotor[motorID-1].set_ma(ma);
-                        // printf("%d号电机 实时电流：%d Ma\n", motorID, ma);
-                    }
+                    process_read_ma(response, motorID);
+                }else if(response.can_dlc == 8 && cmd == 0x42){ //电机驱动参数
+                    process_read_motor_parameter_x(response, motorID);
                 }
             }
         }
     }
 }
 
-//----------------------控制动作命令----------------------
+//--------------------------------------------控制动作命令--------------------------------------------
 // 电机使能控制
 int enable_motor(int addr, bool enable){   
     canid_t base_id = get_base_id(addr);
@@ -414,20 +386,7 @@ int clear_all(int addr){
     return 0;
 }
 
-// 设置单圈回零的零点位置
-int set_zero(int addr, bool save){
-    canid_t base_id = get_base_id(addr);
-    uint8_t dlc = 4;
-    uint8_t save_val = static_cast<uint8_t>(save ? 0x01 : 0x00);
-    uint8_t data[] = {
-        0x93,                               // 命令
-        0x88,                               // 命令
-        save_val,                           // 是否存储：0x01 表示保存
-        FIXED_CHECKSUM                      // 校验
-    };
-    send_packet(base_id, dlc, data);
-    return 0;
-}
+
 
 // 触发回零
 int run_zero(int addr,int mode, bool multiMachine){
@@ -448,24 +407,36 @@ int run_zero(int addr,int mode, bool multiMachine){
     return 0;
 }
 
-// 修改任意细分
-int set_division(int addr,bool save, int division){
+// 解除堵转保护
+int close_stall(int addr){
     canid_t base_id = get_base_id(addr);
-    uint8_t dlc = 5;
-    uint8_t save_val = static_cast<uint8_t>(save ? 0x01 : 0x00);
+    uint8_t dlc = 3;
     uint8_t data[] = {
-        0x84,                               // 命令
-        0x8A,                               // 命令
-        save_val,                           // 是否存储：0x01 表示保存
-        static_cast<uint8_t>(division),     // 细分     --0x07 = 7细分(00表示256细分)
+        0x0E,                               // 命令
+        0x52,                               // 命令
         FIXED_CHECKSUM                      // 校验
     };
     send_packet(base_id, dlc, data);
     return 0;
 }
 
-// 修改驱动配置参数
-int set_motor_parameter(int addr, int dangerRpm, int dangerMa, int dangerTime){
+// 多机同步
+int sync_run(){
+    canid_t base_id = get_base_id(0);
+    uint8_t dlc = 3;
+    uint8_t data[3] = {
+        0xFF,         // 命令
+        0x66,         // 固定标识
+        FIXED_CHECKSUM // 校验
+    };
+    send_packet(base_id, dlc, data);
+    return 0;
+}
+
+//--------------------------------------------修改参数命令--------------------------------------------
+
+// 修改驱动配置参数emm
+int set_motor_parameter_emm(int addr, int dangerRpm, int dangerMa, int dangerTime){
     canid_t base_id1 = get_base_id(addr);
     uint8_t dlc1 = 8;
     uint8_t data1[8] = {
@@ -538,6 +509,116 @@ int set_motor_parameter(int addr, int dangerRpm, int dangerMa, int dangerTime){
     return 0;
 }
 
+// 修改驱动配置参数x
+int set_motor_parameter_x(int addr){
+    canid_t base_id1 = get_base_id(addr);
+    uint8_t dlc1 = 8;
+    uint8_t data1[8] = {
+        0x48,                                           // 功能码
+        0xD1,                                           // 命令
+        0x01,                                           // 保存本次修改的配置参数
+        0x00,                                           // 锁定按键功能不启用
+        0x01,                                           // 控制模式为 FOC 闭环控制模式
+        0x01,                                           // 脉冲端口复用模式为 PUL_ENA
+        0x02,                                           // 通讯端口复用模式为 CAN, Y42中02是can端口
+        0x02                                           // En 引脚有效电平为 Hold 
+    };
+
+    canid_t base_id2 = get_base_id(addr) + 1;
+    uint8_t dlc2 = 8;
+    uint8_t data2[8] = {
+        0x48,                                           // 功能码
+        0x00,                                           // Dir 引脚有效电平为 CW
+        0x10,                                           // 细分为16细分（注意：256细分用00表示）
+        0x01,                                           // 细分插补功能使能
+        0x00,                                           // 保留
+        0x00,                                           // 保留
+        0x03,                                           // 修改开环模式工作电流为1200Ma（03EB）
+        0xE8
+    };
+
+    canid_t base_id3 = get_base_id(addr) + 2;
+    uint8_t dlc3 = 8;
+    uint8_t data3[8] = {
+        0x48,                                           // 功能码
+        0x04,                                            // 修改闭环模式堵转时的最大电流为3000Ma(0x04B0)
+        0xB0,                                           //
+        0x0B,                                           //闭环模式最大速度为 3000RPM(0BB8)
+        0xB8,
+        0x03,                                           // 电流环带宽为 1000Hz(03E8)
+        0xE8,
+        0x05                                           // 串口通讯波特率为 115200, 00-08 分别表示9600/19200/25000/38400/ 57600/115200/ 256000/512000/921600      
+        
+    };
+
+    canid_t base_id4 = get_base_id(addr) + 3;
+    uint8_t dlc4 = 8;
+    uint8_t data4[8] = {
+        0x48,                                           // 功能码
+        0x09,                                           //CAN 通讯速率为 1M, 00-09 分别表示10K/20K/50K/83.333K/100K/125K/250K/500K/800K/1M
+        0x00,                                           // 00：自由协议，校验码固定为 6B;
+        0x01,                                           // 控制命令应答方式为 Receive, 00-04 分别表示 None/Receive/Reached/Both/Other
+        0x00,                                           // 不开启命令位置角度继续缩小 10 倍输入功能,
+        0x01,                                           // 堵转保护功能使能,
+        0x00,                                           // 堵转保护检测转速为 8RPM(0008)
+        0x08
+    };
+
+    
+    canid_t base_id5 = get_base_id(addr) + 4;
+    uint8_t dlc5 = 8;
+    uint8_t data5[8] = {
+        0x48,                                       // 功能码（第二帧重复）
+        0x08,                                       // 堵转保护检测电流为 2200mA(0898) 
+        0x98,                                       
+        0x07,                                       // 堵转保护检测时间为 2000ms(07D0)
+        0xD0,
+        0x00,                                       // 位置到达窗口为0.8°
+        0x08,
+        FIXED_CHECKSUM                              // 校验
+    };
+
+
+    send_packet(base_id1, dlc1, data1);
+    send_packet(base_id2, dlc2, data2);
+    send_packet(base_id3, dlc3, data3);
+    send_packet(base_id4, dlc4, data4);
+    send_packet(base_id5, dlc5, data5);
+
+    return 0;
+}
+
+// 修改任意细分
+int set_division(int addr,bool save, int division){
+    canid_t base_id = get_base_id(addr);
+    uint8_t dlc = 5;
+    uint8_t save_val = static_cast<uint8_t>(save ? 0x01 : 0x00);
+    uint8_t data[] = {
+        0x84,                               // 命令
+        0x8A,                               // 命令
+        save_val,                           // 是否存储：0x01 表示保存
+        static_cast<uint8_t>(division),     // 细分     --0x07 = 7细分(00表示256细分)
+        FIXED_CHECKSUM                      // 校验
+    };
+    send_packet(base_id, dlc, data);
+    return 0;
+}
+
+// 修改单圈回零的零点位置
+int set_zero(int addr, bool save){
+    canid_t base_id = get_base_id(addr);
+    uint8_t dlc = 4;
+    uint8_t save_val = static_cast<uint8_t>(save ? 0x01 : 0x00);
+    uint8_t data[] = {
+        0x93,                               // 命令
+        0x88,                               // 命令
+        save_val,                           // 是否存储：0x01 表示保存
+        FIXED_CHECKSUM                      // 校验
+    };
+    send_packet(base_id, dlc, data);
+    return 0;
+}
+
 // 修改原点回零参数
 int set_zero_parameter(int addr, int acceleration, int timeout , int dangerRpm, int dangerMa, int dangerTime){
     canid_t base_id1 = get_base_id(addr);
@@ -584,33 +665,7 @@ int set_zero_parameter(int addr, int acceleration, int timeout , int dangerRpm, 
     return 0;
 }
 
-// 解除堵转保护
-int close_stall(int addr){
-    canid_t base_id = get_base_id(addr);
-    uint8_t dlc = 3;
-    uint8_t data[] = {
-        0x0E,                               // 命令
-        0x52,                               // 命令
-        FIXED_CHECKSUM                      // 校验
-    };
-    send_packet(base_id, dlc, data);
-    return 0;
-}
-
-// 多机同步
-int sync_run(){
-    canid_t base_id = get_base_id(0);
-    uint8_t dlc = 3;
-    uint8_t data[3] = {
-        0xFF,         // 命令
-        0x66,         // 固定标识
-        FIXED_CHECKSUM // 校验
-    };
-    send_packet(base_id, dlc, data);
-    return 0;
-}
-
-//----------------------读取参数命令----------------------
+//--------------------------------------------读取参数命令--------------------------------------------
 // 读取电机实时转速
 int read_rpm(int addr){
     canid_t base_id = get_base_id(addr);
@@ -644,5 +699,112 @@ int read_ma(int addr) {
         FIXED_CHECKSUM // 校验
     };
     send_packet(base_id, dlc, data);
+    return 0;
+}
+
+// 读取驱动配置参数X
+int read_motor_parameter_x(int addr){
+    canid_t base_id = get_base_id(addr);
+    uint8_t dlc = 3;
+    uint8_t data[] = {
+        0x42,                               // 命令
+        0x6C,                               // 命令
+        FIXED_CHECKSUM                      // 校验
+    };
+
+    send_packet(base_id, dlc, data);
+    return 0;
+}
+
+//--------------------------------------------处理读取命令返回的can报文--------------------------------------------
+int process_read_rpm(can_frame response, uint8_t motorID){
+    uint8_t dir = response.data[1];
+    uint32_t rpm = (response.data[2] << 8) | response.data[3];
+    uint8_t checksum = response.data[4];
+    float rpm_val;
+    if(motorID == 1 || motorID == 4 || motorID == 8){
+        rpm_val = rpm;
+    }else{
+        rpm_val = rpm / 10.0f;
+    }
+    if (checksum == FIXED_CHECKSUM) {
+        mMotor[motorID-1].set_rpm((dir == 0) ? rpm_val : -rpm_val);
+        // printf("%d号电机 实时转速：%.2f rpm\n", motorID, (dir == 0) ? rpm_val : -rpm_val);
+    }
+    return 0;
+}
+
+int process_read_position(can_frame response, uint8_t motorID){
+    uint8_t dir = response.data[1];
+    uint32_t pos = (response.data[2] << 24) | (response.data[3] << 16) | (response.data[4] << 8) | response.data[5];
+    uint8_t checksum = response.data[6];
+    float pos_val;
+    if(motorID == 1 || motorID == 4 || motorID == 8){
+        pos_val = (pos * 360.0f) / 65536.0f;
+    }else{
+        pos_val = pos / 10.0f;
+        pos_val = angleToDistanceConvert(motorID, pos_val);
+    }
+    if (checksum == FIXED_CHECKSUM) {
+        mMotor[motorID-1].set_position((dir == 0) ? pos_val : -pos_val);
+        // printf("%d号电机 实时位置：%.2f°\n", motorID, (dir == 0) ? pos_val : -pos_val);
+    }
+    return 0;
+}
+
+int process_read_ma(can_frame response, uint8_t motorID){
+    uint32_t ma = (response.data[1] << 8) | response.data[2];
+    uint8_t checksum = response.data[3];
+    if (checksum == FIXED_CHECKSUM) {
+        mMotor[motorID-1].set_ma(ma);
+        // printf("%d号电机 实时电流：%d Ma\n", motorID, ma);
+    }
+    return 0;
+}
+
+int process_read_motor_parameter_x(can_frame response, uint8_t motorID){
+    uint8_t can_num = response.can_id & 0x0F;
+    if(can_num == 0){
+        uint8_t byte_num = response.data[1];
+        uint8_t parameter_num = response.data[2];
+        uint8_t lock = response.data[3];
+        uint8_t control_mode = response.data[4];
+        uint8_t pulse_mode = response.data[5];
+        uint8_t communicate_mode = response.data[6];
+        uint8_t en = response.data[7];
+        printf("\n\n\n%d号电机 驱动参数：\n字节数=%d, \n参数个数=%d, \n锁定按键=%d, \n控制模式=%d, \n脉冲端口=%d, \n通讯端口=%d, \nEn引脚=%d\n",
+            motorID, byte_num, parameter_num, lock, control_mode, pulse_mode, communicate_mode, en);
+    }else if(can_num == 1){
+        uint8_t dir = response.data[1];
+        uint8_t division = response.data[2];
+        uint8_t division_chabu = response.data[3];
+        uint8_t null1 = response.data[4];
+        uint8_t null2 = response.data[5];
+        uint32_t open_ma = (response.data[6] << 8) | response.data[7];
+        printf("\n\n\n%d号电机 驱动参数：\n方向=%d, \n细分=%d, \n细分差补=%d, \n开路电流=%d Ma\n",
+            motorID, dir, division, division_chabu, open_ma);
+    }else if(can_num == 2){
+        uint32_t close_ma = (response.data[1] << 8) | response.data[2];
+        uint32_t close_rpm = (response.data[3] << 8) | response.data[4];
+        uint32_t ma = (response.data[5] << 8) | response.data[6];
+        uint8_t UartBaud = response.data[7];
+        printf("\n\n\n%d号电机 驱动参数：\n闭环模式最大电流=%d Ma, \n闭环模式最大速度=%d rpm, \n电流环带宽=%d Ma, \n串口通讯波特率=%d\n",
+            motorID, close_ma, close_rpm, ma, UartBaud);
+    }else if(can_num == 3){
+        uint8_t CAN_Baud = response.data[1];
+        uint8_t Checksum = response.data[2];
+        uint8_t Response = response.data[3];
+        uint8_t small = response.data[4];
+        uint8_t Clog_Pro = response.data[5];
+        uint32_t Clog_Rpm = (response.data[6] << 8) | response.data[7];
+        printf("\n\n\n%d号电机 驱动参数：\nCAN通讯波特率=%d, \n校验方式=%d, \n控制命令应答方式=%d, \n角度缩小10 倍输入=%d, \n堵转保护=%d, \n堵转保护检测转速= %d rpm\n",
+            motorID, CAN_Baud, Checksum, Response, small, Clog_Pro, Clog_Rpm);
+    }else if(can_num == 4){
+        uint32_t Clog_Ma = (response.data[1] << 8) | response.data[2];
+        uint32_t Clog_Ms = (response.data[3] << 8) | response.data[4];
+        uint32_t Reached = (response.data[5] << 8) | response.data[6];
+        printf("\n\n\n%d号电机 驱动参数：\n堵转保护检测电流=%d Ma, \n堵转保护检测时间=%d ms, \n位置到达判断阈值=%d\n",
+            motorID, Clog_Ma, Clog_Ms, Reached);
+    }
     return 0;
 }
