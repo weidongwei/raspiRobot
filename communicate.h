@@ -39,6 +39,7 @@ int sync_run();
 int set_division(int addr,bool save, int division);
 int set_motor_parameter_emm(int addr, int dangerRpm, int dangerMa, int dangerTime);
 int set_motor_parameter_x(int addr);
+int set_motor_id(int addr, int new_id);
 int set_zero(int addr, bool save);
 int set_zero_parameter(int addr, int acceleration, int timeout , int dangerRpm, int dangerMa, int dangerTime);
 // 读取状态命令

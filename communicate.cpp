@@ -588,6 +588,21 @@ int set_motor_parameter_x(int addr){
     return 0;
 }
 
+//修改电机id
+int set_motor_id(int addr, int new_id){
+    canid_t base_id = get_base_id(addr);
+    uint8_t dlc = 5;
+    uint8_t data[] = {
+        0xAE,                               // 命令
+        0x4B,                               // 命令
+        0x01,                               // 是否存储：0x01 表示保存
+        static_cast<uint8_t>(new_id),       // 新ID地址
+        FIXED_CHECKSUM                      // 校验
+    };
+    send_packet(base_id, dlc, data);
+    return 0;
+}
+
 // 修改任意细分
 int set_division(int addr,bool save, int division){
     canid_t base_id = get_base_id(addr);

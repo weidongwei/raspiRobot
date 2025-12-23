@@ -154,6 +154,12 @@ int main(int argc, char *argv[]){
             set_motor_parameter_x(motor_id);
         }
 
+        else if(strcmp(argv[1], "set_motor_id")==0){
+            int motor_id = atoi(argv[2]);
+            int new_id = atoi(argv[3]);
+            set_motor_id(motor_id, new_id);
+        }
+
 
         sleep(600);
         return 0;

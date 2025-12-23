@@ -107,7 +107,11 @@ void *motorStatusThreadFunc(void* arg) {
             mMotor[0].update_status();
             mMotor[1].update_status();
             mMotor[2].update_status();
+            mMotor[3].update_status();
+            mMotor[4].update_status();
+            mMotor[5].update_status();
             mMotor[6].update_status();
+            mMotor[7].update_status();
         }
         hungupTheThread(id);
     }
