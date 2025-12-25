@@ -35,7 +35,7 @@ std::string getTimeString(){
     return oss.str();
 }
 // 采集图像
-int takepic(){
+int takeVedio(){
     std::string base_path = "/home/dw/robot/image/origin_image/";
     std::string filename  = "origin_" + getTimeString() + ".jpg";
     std::string save_path = base_path + filename;
@@ -71,6 +71,44 @@ int takepic(){
         // detect_laser_edge(cv::imread("/home/dw/robot/image/1.jpg"));
         // detect_laser_center(cv::imread("/home/dw/robot/image/1.jpg"));
     }
+    cap.release();
+    cv::destroyAllWindows();
+    return 0;
+}
+
+int takePic(){
+    std::string base_path = "/home/dw/robot/image/origin_image/";
+    std::string filename  = "origin_" + getTimeString() + ".jpg";
+    std::string save_path = base_path + filename;
+    cv::VideoCapture cap(0, cv::CAP_V4L2);
+    // cv::VideoCapture cap;
+    // cap.open(0, cv::CAP_V4L2);
+    if (!cap.isOpened()) {
+        std::cerr << "无法打开摄像头" << 0 << std::endl;
+        return false;
+    }
+    cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
+    cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
+    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 3);  // 有的驱动 1=手动，3=自动，需测试
+    // cap.set(cv::CAP_PROP_EXPOSURE, 3000);     // 曝光时间整数us
+    // cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
+    // cap.set(cv::CAP_PROP_BRIGHTNESS, 50);  // 设置亮度为 50(-64 ~ 64)
+
+    cv::Mat frame;
+    cv::waitKey(1000);
+
+
+    cap >> frame;
+    if (frame.empty()) {
+        std::cerr << "无法获取图像帧。" << std::endl;
+    }
+    cv::waitKey(10);
+    cv::imwrite(save_path, frame); 
+    std::cout << "图像已保存到 " << save_path << std::endl;
+    sleep(1);
+    // detect_laser_edge(cv::imread("/home/dw/robot/image/1.jpg"));
+    // detect_laser_center(cv::imread("/home/dw/robot/image/1.jpg"));
+
     cap.release();
     cv::destroyAllWindows();
     return 0;

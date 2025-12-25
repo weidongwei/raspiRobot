@@ -124,7 +124,7 @@ void *laserControlThreadFunc(void* arg){
     THREADINFO *thisThreadInfo = (THREADINFO *)arg; 
     int id = thisThreadInfo->ID;
 
-    const int pin = 13;
+    const int pin = 12;
     const int period_us = 2000;     // 500Hz
     const float duty = 0.25;
 
@@ -174,7 +174,7 @@ void *photoControlThreadFunc(void* arg){
         }
         threadInfo[id].runningState = THR_RUN;
         while ( !beginExit ) {
-            takepic();
+            takeVedio();
         }
         hungupTheThread(id);
     }

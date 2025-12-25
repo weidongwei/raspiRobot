@@ -3,7 +3,8 @@
 #include <stdio.h>
 #include <opencv2/opencv.hpp>
 
-int takepic();
+int takePic();
+int takeVedio();
 int userImgProc0(cv::Mat *theMat, long beginTime, long afterTime);
 int userImgProc1(cv::Mat *theMat, long beginTime, long afterTime);
 int detect_img_edge(cv::Mat src, cv::Mat &out);
