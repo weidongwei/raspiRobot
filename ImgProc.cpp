@@ -8,15 +8,17 @@
 
 
 
-cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) <<
-    793.0954708529097, 0, 390.0087179575285,
-    0, 792.5891147885803, 300.4939653275754,
+cv::Mat MycameraMatrix = (cv::Mat_<double>(3, 3) <<
+    622.8518195651313, 0, 324.9937701989255,
+    0, 622.3557983623182, 240.0932694742121,
     0, 0, 1);
 
-cv::Mat distCoeffs = (cv::Mat_<double>(1, 5) <<
-    -0.4836918927522525, 0.3019374911984649,
-    0.003686647866372401, 0.002812744443721311,
-    -0.1460461058419775);
+cv::Mat MydistCoeffs = (cv::Mat_<double>(1, 5) <<
+    -0.2417610723353469, 1.347540335379867,
+    -0.001577442260184354, -0.001153209194483007,
+    -3.015609162190799);
+
+double reprojError = 0.138174;
 
 // 获取当前时间字符串
 std::string getTimeString(){
@@ -102,8 +104,10 @@ int takePic(){
     if (frame.empty()) {
         std::cerr << "无法获取图像帧。" << std::endl;
     }
+    cv::Mat undistorted;
+    cv::undistort(frame, undistorted, MycameraMatrix, MydistCoeffs);
     cv::waitKey(10);
-    cv::imwrite(save_path, frame); 
+    cv::imwrite(save_path, undistorted); 
     std::cout << "图像已保存到 " << save_path << std::endl;
     sleep(1);
     // detect_laser_edge(cv::imread("/home/dw/robot/image/1.jpg"));
@@ -153,7 +157,7 @@ int detect_img_edge(cv::Mat src, cv::Mat &out) {
 int userImgProc0(cv::Mat *theMat, long beginTime, long afterTime){
 
     cv::Mat undistorted, out;
-    cv::undistort(*theMat, undistorted, cameraMatrix, distCoeffs);
+    cv::undistort(*theMat, undistorted, MycameraMatrix, MydistCoeffs);
     detect_img_edge(undistorted, out);
 
     std::string filename = "image/photo_" + std::to_string(afterTime) + ".jpg";
@@ -364,8 +368,8 @@ int detect_laser_center(cv::Mat img) {
 
     
     std::string base_path = "/home/dw/robot/image/proc_image/";
-    std::string filename1  = "laser_center_detected" + getTimeString() + ".jpg";
-    std::string filename2  = "laser_center_mask" + getTimeString() + ".jpg";
+    std::string filename1  = "detected_" + getTimeString() + ".jpg";
+    std::string filename2  = "mask_" + getTimeString() + ".jpg";
     std::string save_path1 = base_path + filename1;
     std::string save_path2 = base_path + filename2;
     // 7️⃣ 保存结果
@@ -373,6 +377,172 @@ int detect_laser_center(cv::Mat img) {
     cv::imwrite(save_path2, mask_center);
 
     std::cout << "激光中心线检测完成。" << std::endl;
+    return 0;
+}
+
+
+
+bool calibrateCameraFromImages(
+    const std::vector<cv::Mat>& images,
+    cv::Size boardSize,
+    float squareSize,
+    cv::Mat& cameraMatrix,
+    cv::Mat& distCoeffs,
+    double& reprojError,
+    const std::string& debugSaveDir
+) {
+    std::vector<std::vector<cv::Point2f>> imagePoints;
+    std::vector<std::vector<cv::Point3f>> objectPoints;
+
+    // 构造棋盘世界坐标
+    std::vector<cv::Point3f> objp;
+    for (int i = 0; i < boardSize.height; ++i) {
+        for (int j = 0; j < boardSize.width; ++j) {
+            objp.emplace_back(j * squareSize,
+                              i * squareSize,
+                              0.0f);
+        }
+    }
+
+    cv::Size imageSize;
+    int imgIdx = 0;
+
+    for (const auto& img : images) {
+        if (img.empty()) {
+            imgIdx++;
+            continue;
+        }
+
+        imageSize = img.size();
+
+        cv::Mat gray;
+        cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY);
+
+        std::vector<cv::Point2f> corners;
+        bool found = cv::findChessboardCorners(
+            gray,
+            boardSize,
+            corners,
+            cv::CALIB_CB_ADAPTIVE_THRESH |
+            cv::CALIB_CB_NORMALIZE_IMAGE
+        );
+
+        // ---------- 保存中间图像 ----------
+        cv::Mat vis = img.clone();
+
+        if (found) {
+            cv::cornerSubPix(
+                gray,
+                corners,
+                cv::Size(11, 11),
+                cv::Size(-1, -1),
+                cv::TermCriteria(
+                    cv::TermCriteria::EPS |
+                    cv::TermCriteria::COUNT,
+                    30, 0.001
+                )
+            );
+
+            imagePoints.push_back(corners);
+            objectPoints.push_back(objp);
+
+            cv::drawChessboardCorners(
+                vis,
+                boardSize,
+                corners,
+                found
+            );
+        }
+
+        // 保存图像（无论成功还是失败）
+        std::ostringstream name;
+        name << debugSaveDir << "/calib_"
+             << imgIdx
+             << (found ? "_ok.jpg" : "_fail.jpg");
+
+        cv::imwrite(name.str(), vis);
+        imgIdx++;
+    }
+
+    if (imagePoints.size() < 10) {
+        std::cerr << "Not enough valid calibration images." << std::endl;
+        return false;
+    }
+
+    std::vector<cv::Mat> rvecs, tvecs;
+
+    double rms = cv::calibrateCamera(
+        objectPoints,
+        imagePoints,
+        imageSize,
+        cameraMatrix,
+        distCoeffs,
+        rvecs,
+        tvecs
+    );
+
+    // ---------- 计算重投影误差 ----------
+    double totalError = 0.0;
+    size_t totalPoints = 0;
+
+    for (size_t i = 0; i < objectPoints.size(); ++i) {
+        std::vector<cv::Point2f> projected;
+        cv::projectPoints(
+            objectPoints[i],
+            rvecs[i],
+            tvecs[i],
+            cameraMatrix,
+            distCoeffs,
+            projected
+        );
+
+        double err = cv::norm(imagePoints[i], projected, cv::NORM_L2);
+        totalError += err * err;
+        totalPoints += objectPoints[i].size();
+    }
+
+    reprojError = std::sqrt(totalError / totalPoints);
+
+    return true;
+}
+
+int biaoding(){
+    std::vector<cv::Mat> images;
+    // 读取标定图像
+    for (int i = 1; i <= 22; ++i) {
+        std::string path = "/home/dw/robot/image/origin_image/biaoding" + std::to_string(i) + ".jpg";
+        cv::Mat img = cv::imread(path);
+        if (!img.empty())
+            images.push_back(img);
+    }
+
+    cv::Mat cameraMatrix, distCoeffs;
+    double reprojError;
+
+    bool ok = calibrateCameraFromImages(
+        images,
+        cv::Size(11, 8),
+        3.0f,
+        cameraMatrix,
+        distCoeffs,
+        reprojError,
+        "/home/dw/robot/image/origin_image"
+    );
+
+    if (ok) {
+        std::cout << "\n===== Camera Calibration Result =====\n";
+
+        std::cout << "Camera Matrix (K):\n";
+        std::cout << cameraMatrix << std::endl;
+
+        std::cout << "\nDistortion Coefficients (D):\n";
+        std::cout << distCoeffs << std::endl;
+
+        std::cout << "\nReprojection Error:\n";
+        std::cout << reprojError << std::endl;
+
+        std::cout << "=====================================\n";
+    }
     return 0;
 }
 

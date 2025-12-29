@@ -131,7 +131,7 @@ int main(int argc, char *argv[]){
             emm_motor_move(motor_id, angle);
         }
 
-        else if(strcmp(argv[1], "takepic")==0){
+        else if(strcmp(argv[1], "takeVideo")==0){
             wakeupThreadWait(THR_PHOTO_CONTROL);
         }
 
@@ -167,9 +167,13 @@ int main(int argc, char *argv[]){
         }
 
         else if(strcmp(argv[1], "takePic")==0){
-            setLaserStatus(true); 
-            wakeupThreadWait(THR_LASER_CONTROL);
+            // setLaserStatus(true); 
+            // wakeupThreadWait(THR_LASER_CONTROL);
             takePic();
+        }
+
+        else if(strcmp(argv[1], "biaoding")==0){
+            detect_laser_center(cv::imread("/home/dw/robot/image/origin_image/origin_20251225_151459.jpg"));
         }
 
 
