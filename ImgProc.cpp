@@ -182,7 +182,25 @@ int userImgProc1(cv::Mat *theMat, long beginTime, long afterTime){
 }
 
 
+//激光像素坐标转实际距离,平面到喷嘴的距离
+double y_pixel_to_distance(double y_pixel) {
+    double a = 5.63095238;
+    double b = -97.55952381;
+    double c = 462.5952381;
 
+    double A = a;
+    double B = b;
+    double C = c - y_pixel;
+
+    double delta = B*B - 4*A*C;
+    if (delta < 0) return -1; // 无解
+
+    double d1 = (-B + sqrt(delta)) / (2*A);
+    double d2 = (-B - sqrt(delta)) / (2*A);
+
+
+    return (d1 >= 0 && d1 <= 9) ? d1 : d2;
+}
 
 
 // int detect_laser_edge(cv::Mat img) {
@@ -302,11 +320,14 @@ int detect_laser_edge(cv::Mat img) {
     return 0;
 }
 
-int detect_laser_center(cv::Mat img) {
-    if (img.empty()) {
+int detect_laser_center(cv::Mat image) {
+    if (image.empty()) {
         std::cerr << "Error: Image is empty." << std::endl;
         return -1;
     }
+    // 去畸变
+    cv::Mat img;
+    cv::undistort(image, img, MycameraMatrix, MydistCoeffs);
 
     // 1️⃣ 通道增强（提取绿色激光）
     std::vector<cv::Mat> bgr;
@@ -319,7 +340,7 @@ int detect_laser_center(cv::Mat img) {
     // 2️⃣ 自适应阈值
     double minVal, maxVal;
     cv::minMaxLoc(diff, &minVal, &maxVal);
-    int threshold_value = static_cast<int>(std::max(30.0, maxVal * 0.5));
+    int threshold_value = static_cast<int>(std::max(30.0, maxVal * 0.3));
 
     cv::Mat mask;
     cv::threshold(diff, mask, threshold_value, 255, cv::THRESH_BINARY);
@@ -327,6 +348,7 @@ int detect_laser_center(cv::Mat img) {
     // 3️⃣ 轮廓检测
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    
 
     cv::Mat img_with_contours = img.clone();
     for (const auto& contour : contours) {
@@ -336,6 +358,7 @@ int detect_laser_center(cv::Mat img) {
     }
 
     // 4️⃣ 中心线计算
+    std::vector<std::vector<int>> distance_points(diff.cols);
     cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
     for (const auto& contour : contours) {
         cv::Rect box = cv::boundingRect(contour);
@@ -349,10 +372,14 @@ int detect_laser_center(cv::Mat img) {
             }
             if (!y_coords.empty()) {
                 int y_center = (y_coords.front() + y_coords.back()) / 2;
+                double dis = y_pixel_to_distance(y_center);
+                distance_points[x].push_back(dis);
+                printf("x: %d, y_center: %d, distance: %.2f\n", x, y_center, dis);
                 mask_center.at<uchar>(y_center, x) = 255;
             }
         }
     }
+
 
     // 5️⃣ 修复断线（形态学闭运算）
     cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 1));
@@ -367,14 +394,17 @@ int detect_laser_center(cv::Mat img) {
     }
 
     
-    std::string base_path = "/home/dw/robot/image/proc_image/";
-    std::string filename1  = "detected_" + getTimeString() + ".jpg";
+    std::string base_path = "/home/dw/robot/image/biaoding/";
+    std::string filename1  = "diff_" + getTimeString() + ".jpg";
     std::string filename2  = "mask_" + getTimeString() + ".jpg";
+    std::string filename3  = "detected_" + getTimeString() + ".jpg";
     std::string save_path1 = base_path + filename1;
     std::string save_path2 = base_path + filename2;
+    std::string save_path3 = base_path + filename3;
     // 7️⃣ 保存结果
-    cv::imwrite(save_path1, img_with_contours);
+    cv::imwrite(save_path1, diff);
     cv::imwrite(save_path2, mask_center);
+    cv::imwrite(save_path3, img_with_contours);
 
     std::cout << "激光中心线检测完成。" << std::endl;
     return 0;
@@ -506,6 +536,7 @@ bool calibrateCameraFromImages(
     return true;
 }
 
+//相机标定
 int biaoding(){
     std::vector<cv::Mat> images;
     // 读取标定图像
@@ -545,6 +576,8 @@ int biaoding(){
     }
     return 0;
 }
+
+
 
 
 

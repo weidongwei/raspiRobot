@@ -173,7 +173,13 @@ int main(int argc, char *argv[]){
         }
 
         else if(strcmp(argv[1], "biaoding")==0){
-            detect_laser_center(cv::imread("/home/dw/robot/image/origin_image/origin_20251225_151459.jpg"));
+            detect_laser_center(cv::imread("/home/dw/robot/image/origin_image/1.jpg"));
+        }
+
+        else if(strcmp(argv[1], "y2d")==0){
+            double y_pixel = atof(argv[2]);
+            double distance = y_pixel_to_distance(y_pixel);
+            std::cout << "y_pixel: " << y_pixel << " 对应距离: " << distance << " cm" << std::endl;
         }
 
 

@@ -22,6 +22,7 @@ bool calibrateCameraFromImages(
     const std::string& debugSaveDir        // 中间图像保存目录
 );
 int biaoding();
+double y_pixel_to_distance(double y_pixel);
 
 
 #endif // IMGPROC_H
