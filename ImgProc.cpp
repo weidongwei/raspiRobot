@@ -5,6 +5,7 @@
 #include <vector>
 #include <chrono>
 #include <ctime>
+#include <fstream>
 
 
 
@@ -325,6 +326,19 @@ int detect_laser_center(cv::Mat image) {
         std::cerr << "Error: Image is empty." << std::endl;
         return -1;
     }
+
+    //打开csv文件
+    std::string path = "/home/dw/robot/image/";
+    std::string fname  = "points" + getTimeString() + ".csv";
+    std::string savePath = path + fname;
+    std::ofstream ofs(savePath);
+    if (!ofs.is_open()) {
+        std::cerr << "无法打开文件" << std::endl;
+        return -1;
+    }
+    // 写表头
+    ofs << "x_pixel,y_pixel,distance_cm\n";
+
     // 去畸变
     cv::Mat img;
     cv::undistort(image, img, MycameraMatrix, MydistCoeffs);
@@ -372,9 +386,16 @@ int detect_laser_center(cv::Mat image) {
             }
             if (!y_coords.empty()) {
                 int y_center = (y_coords.front() + y_coords.back()) / 2;
+
                 double dis = y_pixel_to_distance(y_center);
                 distance_points[x].push_back(dis);
                 printf("x: %d, y_center: %d, distance: %.2f\n", x, y_center, dis);
+                if (dis > 0) {  // 过滤非法值
+                    ofs << x << ","
+                        << 230 << ","
+                        << dis << "\n";
+                }
+
                 mask_center.at<uchar>(y_center, x) = 255;
             }
         }
@@ -407,6 +428,7 @@ int detect_laser_center(cv::Mat image) {
     cv::imwrite(save_path3, img_with_contours);
 
     std::cout << "激光中心线检测完成。" << std::endl;
+    ofs.close();
     return 0;
 }
 

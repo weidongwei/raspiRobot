@@ -182,7 +182,6 @@ int main(int argc, char *argv[]){
             std::cout << "y_pixel: " << y_pixel << " 对应距离: " << distance << " cm" << std::endl;
         }
 
-
         sleep(600);
         return 0;
     }
