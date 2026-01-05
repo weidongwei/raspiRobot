@@ -51,10 +51,10 @@ int takeVedio(){
     }
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
-    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 3);  // 有的驱动 1=手动，3=自动，需测试
-    // cap.set(cv::CAP_PROP_EXPOSURE, 3000);     // 曝光时间整数us
-    // cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
-    // cap.set(cv::CAP_PROP_BRIGHTNESS, 50);  // 设置亮度为 50(-64 ~ 64)
+    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);  // 有的驱动 1=手动，3=自动，需测试
+    cap.set(cv::CAP_PROP_EXPOSURE, 300);     // 曝光时间整数us
+    cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
+    cap.set(cv::CAP_PROP_BRIGHTNESS, 50);  // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat frame;
     cv::waitKey(1000);
@@ -92,10 +92,10 @@ int takePic(){
     }
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
-    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 3);  // 有的驱动 1=手动，3=自动，需测试
-    // cap.set(cv::CAP_PROP_EXPOSURE, 3000);     // 曝光时间整数us
-    // cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
-    // cap.set(cv::CAP_PROP_BRIGHTNESS, 50);  // 设置亮度为 50(-64 ~ 64)
+    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);  // 有的驱动 1=手动，3=自动，需测试
+    cap.set(cv::CAP_PROP_EXPOSURE, 300);     // 曝光时间整数us
+    cap.set(cv::CAP_PROP_SHARPNESS, 50);  // 设置锐度为 100(0 ~ 100)
+    cap.set(cv::CAP_PROP_BRIGHTNESS, 30);  // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat frame;
     cv::waitKey(1000);
@@ -328,8 +328,8 @@ int detect_laser_center(cv::Mat image) {
     }
 
     //打开csv文件
-    std::string path = "/home/dw/robot/image/";
-    std::string fname  = "points" + getTimeString() + ".csv";
+    std::string path = "/home/dw/robot/image/proc_laser/";
+    std::string fname  = getTimeString() + "_points" + ".csv";
     std::string savePath = path + fname;
     std::ofstream ofs(savePath);
     if (!ofs.is_open()) {
@@ -354,14 +354,49 @@ int detect_laser_center(cv::Mat image) {
     // 2️⃣ 自适应阈值
     double minVal, maxVal;
     cv::minMaxLoc(diff, &minVal, &maxVal);
-    int threshold_value = static_cast<int>(std::max(30.0, maxVal * 0.3));
+    int threshold_value = static_cast<int>(std::max(30.0, maxVal * 0.8));
 
     cv::Mat mask;
     cv::threshold(diff, mask, threshold_value, 255, cv::THRESH_BINARY);
 
     // 3️⃣ 轮廓检测
     std::vector<std::vector<cv::Point>> contours;
-    cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    // cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    // ====== 根据轮廓个数来调整阈值 ======
+    int iter = 0;
+    while (iter++ < 40) {
+        cv::Mat mask;
+        cv::threshold(diff, mask, threshold_value, 255, cv::THRESH_BINARY);
+        cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+        if ((contours.size() <= 2 && contours.size() > 0) || threshold_value <= 3)
+            break;
+
+        threshold_value -= 3;
+    }
+    // ======================================
+
+
+    // ====== 只保留最大轮廓（去残影） ======
+    int max_idx = -1;
+    double max_area = 0.0;
+
+    for (int i = 0; i < contours.size(); ++i) {
+        double area = cv::contourArea(contours[i]);
+        if (area > max_area) {
+            max_area = area;
+            max_idx = i;
+        }
+    }
+
+    std::vector<std::vector<cv::Point>> filtered_contours;
+    if (max_idx >= 0) {
+        filtered_contours.push_back(contours[max_idx]);
+    }
+    contours = filtered_contours;
+    // ======================================
+
     
 
     cv::Mat img_with_contours = img.clone();
@@ -415,10 +450,10 @@ int detect_laser_center(cv::Mat image) {
     }
 
     
-    std::string base_path = "/home/dw/robot/image/biaoding/";
-    std::string filename1  = "diff_" + getTimeString() + ".jpg";
-    std::string filename2  = "mask_" + getTimeString() + ".jpg";
-    std::string filename3  = "detected_" + getTimeString() + ".jpg";
+    std::string base_path = "/home/dw/robot/image/proc_laser/";
+    std::string filename1  = getTimeString() + "_diff" + ".jpg";
+    std::string filename2  = getTimeString() + "_mask" +  ".jpg";
+    std::string filename3  = getTimeString() + "_detected" + ".jpg";
     std::string save_path1 = base_path + filename1;
     std::string save_path2 = base_path + filename2;
     std::string save_path3 = base_path + filename3;
