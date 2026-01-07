@@ -184,10 +184,29 @@ int userImgProc1(cv::Mat *theMat, long beginTime, long afterTime){
 
 
 //激光像素坐标转实际距离,平面到喷嘴的距离
-double y_pixel_to_distance(double y_pixel) {
+double y_pixel_to_distance1(double y_pixel) {
     double a = 5.63095238;
     double b = -97.55952381;
     double c = 462.5952381;
+
+    double A = a;
+    double B = b;
+    double C = c - y_pixel;
+
+    double delta = B*B - 4*A*C;
+    if (delta < 0) return -1; // 无解
+
+    double d1 = (-B + sqrt(delta)) / (2*A);
+    double d2 = (-B - sqrt(delta)) / (2*A);
+
+
+    return (d1 >= 0 && d1 <= 9) ? d1 : d2;
+}
+
+double y_pixel_to_distance2(double y_pixel) {
+    double a = 4.35714286;
+    double b = -87.23809524;
+    double c = 523.88095238;
 
     double A = a;
     double B = b;
@@ -378,24 +397,24 @@ int detect_laser_center(cv::Mat image) {
     // ======================================
 
 
-    // ====== 只保留最大轮廓（去残影） ======
-    int max_idx = -1;
-    double max_area = 0.0;
+    // // ====== 只保留最大轮廓（去残影） ======
+    // int max_idx = -1;
+    // double max_area = 0.0;
 
-    for (int i = 0; i < contours.size(); ++i) {
-        double area = cv::contourArea(contours[i]);
-        if (area > max_area) {
-            max_area = area;
-            max_idx = i;
-        }
-    }
+    // for (int i = 0; i < contours.size(); ++i) {
+    //     double area = cv::contourArea(contours[i]);
+    //     if (area > max_area) {
+    //         max_area = area;
+    //         max_idx = i;
+    //     }
+    // }
 
-    std::vector<std::vector<cv::Point>> filtered_contours;
-    if (max_idx >= 0) {
-        filtered_contours.push_back(contours[max_idx]);
-    }
-    contours = filtered_contours;
-    // ======================================
+    // std::vector<std::vector<cv::Point>> filtered_contours;
+    // if (max_idx >= 0) {
+    //     filtered_contours.push_back(contours[max_idx]);
+    // }
+    // contours = filtered_contours;
+    // // ======================================
 
     
 
@@ -406,12 +425,55 @@ int detect_laser_center(cv::Mat image) {
             cv::drawContours(img_with_contours, std::vector<std::vector<cv::Point>>{contour}, -1, cv::Scalar(0, 0, 255), 1);
     }
 
+    // // 4️⃣ 中心线计算
+    // std::vector<std::vector<int>> distance_points(diff.cols);
+    // cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
+    // for (const auto& contour : contours) {
+    //     cv::Rect box = cv::boundingRect(contour);
+    //     if (box.area() < 100) continue;
+
+    //     for (int x = box.x; x < box.x + box.width; ++x) {
+    //         std::vector<int> y_coords;
+    //         for (int y = box.y; y < box.y + box.height; ++y) {
+    //             if (diff.at<uchar>(y, x) > threshold_value)
+    //                 y_coords.push_back(y);
+    //         }
+    //         if (!y_coords.empty()) {
+    //             int y_center = (y_coords.front() + y_coords.back()) / 2;
+
+    //             double dis = y_pixel_to_distance1(y_center);
+    //             distance_points[x].push_back(dis);
+    //             printf("x: %d, y_center: %d, distance: %.2f\n", x, y_center, dis);
+    //             if (dis > 0) {  // 过滤非法值
+    //                 ofs << x << ","
+    //                     << 230 << ","
+    //                     << dis << "\n";
+    //             }
+
+    //             // printf("x: %d, y_center: %d\n", x, y_center);
+
+    //             mask_center.at<uchar>(y_center, x) = 255;
+    //         }
+    //     }
+    // }
+
     // 4️⃣ 中心线计算
     std::vector<std::vector<int>> distance_points(diff.cols);
     cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
+    // 保存每个轮廓的数据
+    struct LaserContour {
+        std::vector<int> xs;
+        std::vector<int> ys;
+        double y_average;
+        int laser_type; // 1 或 2
+    };
+    std::vector<LaserContour> laser_contours;
     for (const auto& contour : contours) {
+
         cv::Rect box = cv::boundingRect(contour);
         if (box.area() < 100) continue;
+
+        LaserContour lc;
 
         for (int x = box.x; x < box.x + box.width; ++x) {
             std::vector<int> y_coords;
@@ -419,20 +481,49 @@ int detect_laser_center(cv::Mat image) {
                 if (diff.at<uchar>(y, x) > threshold_value)
                     y_coords.push_back(y);
             }
+
             if (!y_coords.empty()) {
                 int y_center = (y_coords.front() + y_coords.back()) / 2;
-
-                double dis = y_pixel_to_distance(y_center);
-                distance_points[x].push_back(dis);
-                printf("x: %d, y_center: %d, distance: %.2f\n", x, y_center, dis);
-                if (dis > 0) {  // 过滤非法值
-                    ofs << x << ","
-                        << 230 << ","
-                        << dis << "\n";
-                }
-
-                mask_center.at<uchar>(y_center, x) = 255;
+                lc.xs.push_back(x);
+                lc.ys.push_back(y_center);
             }
+        }
+
+        if (lc.ys.empty()) continue;
+
+        double sum = 0;
+        for (int y : lc.ys) sum += y;
+        lc.y_average = sum / lc.ys.size();
+
+        laser_contours.push_back(lc);
+    }
+
+    // ---------- 安全检查 ----------
+    if (laser_contours.empty()) {
+        std::cerr << "未检测到激光轮廓" << std::endl;
+        return -1;
+    }
+
+    // ---------- 第二遍：按轮廓选择距离函数 ----------
+    if(laser_contours[0].y_average < laser_contours[1].y_average){
+        laser_contours[0].laser_type = 1;
+        laser_contours[1].laser_type = 2;
+    } else{
+        laser_contours[0].laser_type = 2;
+        laser_contours[1].laser_type = 1;
+    }
+    for (const auto& lc : laser_contours) {
+
+        for (size_t i = 0; i < lc.xs.size(); ++i) {
+            int x = lc.xs[i];
+            int y = lc.ys[i];
+
+            double dis = (lc.laser_type == 1) ? y_pixel_to_distance1(y) : y_pixel_to_distance2(y);
+
+            if (dis <= 0) continue;
+
+            ofs << x << "," << y << "," << dis << "\n";
+            mask_center.at<uchar>(y, x) = 255;
         }
     }
 
