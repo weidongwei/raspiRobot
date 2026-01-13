@@ -174,7 +174,7 @@ void *photoControlThreadFunc(void* arg){
         }
         threadInfo[id].runningState = THR_RUN;
         while ( !beginExit ) {
-            takeVedio();
+            saveVedio();
         }
         hungupTheThread(id);
     }

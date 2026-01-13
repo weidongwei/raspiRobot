@@ -79,6 +79,49 @@ int takeVedio(){
     return 0;
 }
 
+// 保存图像集
+int saveVedio(){
+    
+    cv::VideoCapture cap(0, cv::CAP_V4L2);
+    // cv::VideoCapture cap;
+    // cap.open(0, cv::CAP_V4L2);
+    if (!cap.isOpened()) {
+        std::cerr << "无法打开摄像头" << 0 << std::endl;
+        return false;
+    }
+    cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
+    cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
+    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);  // 有的驱动 1=手动，3=自动，需测试
+    cap.set(cv::CAP_PROP_EXPOSURE, 300);     // 曝光时间整数us
+    cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
+    cap.set(cv::CAP_PROP_BRIGHTNESS, 50);  // 设置亮度为 50(-64 ~ 64)
+
+    cv::Mat frame;
+    cv::waitKey(1000);
+
+
+    while (true) {
+        cap >> frame;
+        if (frame.empty()) {
+            std::cerr << "无法获取图像帧。" << std::endl;
+            break;
+        }
+        std::string base_path = "/home/dw/robot/image/video/";
+        std::string filename  = "origin_" + getTimeString() + ".jpg";
+        std::string save_path = base_path + filename;
+        // cv::imshow("Camera Video", frame);
+        cv::waitKey(10);
+        cv::imwrite(save_path, frame); 
+        std::cout << "图像已保存到 " << save_path << std::endl;
+        sleep(1);
+        // detect_laser_edge(cv::imread("/home/dw/robot/image/1.jpg"));
+        // detect_laser_center(cv::imread("/home/dw/robot/image/1.jpg"));
+    }
+    cap.release();
+    cv::destroyAllWindows();
+    return 0;
+}
+
 int takePic(){
     std::string base_path = "/home/dw/robot/image/origin_image/";
     std::string filename  = "origin_" + getTimeString() + ".jpg";
@@ -356,7 +399,7 @@ int detect_laser_center(cv::Mat image) {
         return -1;
     }
     // 写表头
-    ofs << "x_pixel,y_pixel,distance_cm\n";
+    ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
 
     // 去畸变
     cv::Mat img;
@@ -384,37 +427,48 @@ int detect_laser_center(cv::Mat image) {
 
     // ====== 根据轮廓个数来调整阈值 ======
     int iter = 0;
-    while (iter++ < 40) {
+    while (iter++ < 100) {
         cv::Mat mask;
         cv::threshold(diff, mask, threshold_value, 255, cv::THRESH_BINARY);
         cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-        if ((contours.size() <= 2 && contours.size() > 0) || threshold_value <= 3)
+        if ((contours.size() <= 2 && contours.size() > 0) || threshold_value <= 50){
             break;
-
+        }
+        printf("调整阈值中，当前阈值: %d, 检测到轮廓数: %lu\n", threshold_value, contours.size());
         threshold_value -= 3;
     }
-    // ======================================
+    // ====== 只保留最大两个轮廓（去残影） ======
+    int max_idx1 = -1, max_idx2 = -1;
+    double max_area1 = 0.0, max_area2 = 0.0;
 
+    for (int i = 0; i < contours.size(); ++i) {
+        double area = cv::contourArea(contours[i]);
 
-    // // ====== 只保留最大轮廓（去残影） ======
-    // int max_idx = -1;
-    // double max_area = 0.0;
+        if (area > max_area1) {
+            // 原第一名降为第二名
+            max_area2 = max_area1;
+            max_idx2  = max_idx1;
 
-    // for (int i = 0; i < contours.size(); ++i) {
-    //     double area = cv::contourArea(contours[i]);
-    //     if (area > max_area) {
-    //         max_area = area;
-    //         max_idx = i;
-    //     }
-    // }
+            max_area1 = area;
+            max_idx1  = i;
+        }
+        else if (area > max_area2) {
+            max_area2 = area;
+            max_idx2  = i;
+        }
+    }
 
-    // std::vector<std::vector<cv::Point>> filtered_contours;
-    // if (max_idx >= 0) {
-    //     filtered_contours.push_back(contours[max_idx]);
-    // }
-    // contours = filtered_contours;
-    // // ======================================
+    std::vector<std::vector<cv::Point>> filtered_contours;
+
+    if (max_idx1 >= 0)
+        filtered_contours.push_back(contours[max_idx1]);
+
+    if (max_idx2 >= 0)
+        filtered_contours.push_back(contours[max_idx2]);
+
+    contours = filtered_contours;
+    // ==========================================
 
     
 
@@ -424,38 +478,10 @@ int detect_laser_center(cv::Mat image) {
         if (area > img.cols * img.rows * 0.0002)
             cv::drawContours(img_with_contours, std::vector<std::vector<cv::Point>>{contour}, -1, cv::Scalar(0, 0, 255), 1);
     }
+    
+    printf("counters size: %lu, threshold_value: %d\n", contours.size(), threshold_value);
 
-    // // 4️⃣ 中心线计算
-    // std::vector<std::vector<int>> distance_points(diff.cols);
-    // cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
-    // for (const auto& contour : contours) {
-    //     cv::Rect box = cv::boundingRect(contour);
-    //     if (box.area() < 100) continue;
-
-    //     for (int x = box.x; x < box.x + box.width; ++x) {
-    //         std::vector<int> y_coords;
-    //         for (int y = box.y; y < box.y + box.height; ++y) {
-    //             if (diff.at<uchar>(y, x) > threshold_value)
-    //                 y_coords.push_back(y);
-    //         }
-    //         if (!y_coords.empty()) {
-    //             int y_center = (y_coords.front() + y_coords.back()) / 2;
-
-    //             double dis = y_pixel_to_distance1(y_center);
-    //             distance_points[x].push_back(dis);
-    //             printf("x: %d, y_center: %d, distance: %.2f\n", x, y_center, dis);
-    //             if (dis > 0) {  // 过滤非法值
-    //                 ofs << x << ","
-    //                     << 230 << ","
-    //                     << dis << "\n";
-    //             }
-
-    //             // printf("x: %d, y_center: %d\n", x, y_center);
-
-    //             mask_center.at<uchar>(y_center, x) = 255;
-    //         }
-    //     }
-    // }
+    
 
     // 4️⃣ 中心线计算
     std::vector<std::vector<int>> distance_points(diff.cols);
@@ -471,7 +497,7 @@ int detect_laser_center(cv::Mat image) {
     for (const auto& contour : contours) {
 
         cv::Rect box = cv::boundingRect(contour);
-        if (box.area() < 100) continue;
+        if (box.area() < 1000) continue;
 
         LaserContour lc;
 
@@ -504,6 +530,8 @@ int detect_laser_center(cv::Mat image) {
         return -1;
     }
 
+    printf("laser_contours size: %lu\n", laser_contours.size());
+
     // ---------- 第二遍：按轮廓选择距离函数 ----------
     if(laser_contours[0].y_average < laser_contours[1].y_average){
         laser_contours[0].laser_type = 1;
@@ -522,7 +550,7 @@ int detect_laser_center(cv::Mat image) {
 
             if (dis <= 0) continue;
 
-            ofs << x << "," << y << "," << dis << "\n";
+            ofs << lc.laser_type << "," << x << "," << y << "," << dis << "\n";
             mask_center.at<uchar>(y, x) = 255;
         }
     }
