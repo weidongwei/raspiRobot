@@ -2,6 +2,14 @@
 #define IMGPROC_H
 #include <stdio.h>
 #include <opencv2/opencv.hpp>
+#include <vector>
+
+struct LaserData {
+    int laser_id;
+    int x_pixel;
+    int y_pixel;
+    double distance_cm;
+};
 
 int takePic();
 int takeVedio();
@@ -25,6 +33,10 @@ bool calibrateCameraFromImages(
 int biaoding();
 double y_pixel_to_distance1(double y_pixel);
 double y_pixel_to_distance2(double y_pixel);
+int savgolFilter5(const std::vector<LaserData>& data);
+std::vector<LaserData> readLaserCSV(const std::string& filename);
+
+int findAllPeaks(const std::vector<LaserData>& smoothedData);
 
 
 #endif // IMGPROC_H

@@ -6,7 +6,9 @@
 #include <chrono>
 #include <ctime>
 #include <fstream>
+#include <sstream>
 
+#include "ImgProc.h"
 
 
 cv::Mat MycameraMatrix = (cv::Mat_<double>(3, 3) <<
@@ -20,6 +22,8 @@ cv::Mat MydistCoeffs = (cv::Mat_<double>(1, 5) <<
     -3.015609162190799);
 
 double reprojError = 0.138174;
+
+
 
 // 获取当前时间字符串
 std::string getTimeString(){
@@ -263,6 +267,126 @@ double y_pixel_to_distance2(double y_pixel) {
 
 
     return (d1 >= 0 && d1 <= 9) ? d1 : d2;
+}
+
+std::vector<LaserData> readLaserCSV(const std::string& filename) {
+    std::vector<LaserData> dataList;
+    std::ifstream file(filename);
+
+    // 检查文件是否成功打开
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open file " << filename << std::endl;
+        return dataList; // 返回空列表
+    }
+
+    std::string line;
+    // 2. 跳过表头 (laser_id,x_pixel,y_pixel,distance_cm)
+    if (!std::getline(file, line)) {
+        return dataList;
+    }
+
+    // 3. 逐行解析数据
+    while (std::getline(file, line)) {
+        // 跳过空行
+        if (line.empty()) continue;
+
+        std::stringstream ss(line);
+        std::string item;
+        LaserData row;
+
+        try {
+            // 解析 laser_id
+            std::getline(ss, item, ',');
+            row.laser_id = std::stoi(item);
+
+            // 解析 x_pixel
+            std::getline(ss, item, ',');
+            row.x_pixel = std::stoi(item);
+
+            // 解析 y_pixel
+            std::getline(ss, item, ',');
+            row.y_pixel = std::stoi(item);
+
+            // 解析 distance_cm
+            std::getline(ss, item, ',');
+            row.distance_cm = std::stod(item);
+
+            dataList.push_back(row);
+        } catch (const std::exception& e) {
+            // 报错信息：指示哪一行出了问题
+            std::cerr << "Warning: Skipping malformed line: " << line << " (" << e.what() << ")" << std::endl;
+        }
+    }
+
+    file.close();
+    return dataList;
+}
+
+
+// 一个简单的 SG 滤波器函数（窗口大小为 5，多项式阶数为 2）
+// 权重系数推导自 SG 算法公式
+int savgolFilter5(const std::vector<LaserData>& data) {
+    //打开csv文件
+    std::string path = "/home/dw/robot/image/proc_laser/";
+    std::string fname  = getTimeString() + "_points" + ".csv";
+    std::string savePath = path + fname;
+    std::ofstream ofs(savePath);
+    if (!ofs.is_open()) {
+        std::cerr << "无法打开文件" << std::endl;
+        return -1;
+    }
+    // 写表头
+    ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
+    
+    int n = data.size();
+    if (n < 5) return 0;
+
+    // SG 窗口为 5, 阶数为 2 的标准系数（归一化因子为 35）
+    // 系数分布：[-3, 12, 17, 12, -3] / 35
+    // const double coeffs[] = {-3.0/35.0, 12.0/35.0, 17.0/35.0, 12.0/35.0, -3.0/35.0};
+    const double coeffs[] = {
+        -21.0/231.0, 14.0/231.0, 39.0/231.0, 54.0/231.0, 59.0/231.0, 
+         54.0/231.0, 39.0/231.0, 14.0/231.0, -21.0/231.0
+    };
+    double coe = 1/9;
+
+    // 中间部分使用滑动窗口卷积
+    for (int i = 5; i < n - 5; ++i) {
+        // double val = data[i-2].distance_cm * coeffs[0] +
+        //               data[i-1].distance_cm * coeffs[1] +
+        //               data[i].distance_cm   * coeffs[2] +
+        //               data[i+1].distance_cm * coeffs[3] +
+        //               data[i+2].distance_cm * coeffs[4];
+        // double val = data[i-4].distance_cm * coeffs[0] +
+        //              data[i-3].distance_cm * coeffs[1] +
+        //              data[i-2].distance_cm * coeffs[2] +
+        //              data[i-1].distance_cm * coeffs[3] +
+        //              data[i].distance_cm   * coeffs[4] +
+        //              data[i+1].distance_cm * coeffs[5] +
+        //              data[i+2].distance_cm * coeffs[6] +
+        //              data[i+3].distance_cm * coeffs[7] +
+        //              data[i+4].distance_cm * coeffs[8];
+        double val = (data[i-5].distance_cm  +
+                     data[i-4].distance_cm  +
+                     data[i-3].distance_cm  +
+                     data[i-2].distance_cm  +
+                     data[i-1].distance_cm  +
+                     data[i].distance_cm  +
+                     data[i+1].distance_cm  +
+                     data[i+2].distance_cm  +
+                     data[i+3].distance_cm  +
+                     data[i+4].distance_cm  +
+                     data[i+5].distance_cm )/11;
+        ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
+    }
+
+    // 边界处理（简单处理：保持原样或使用半窗口平均）
+    // smoothed[0] = data[0]; smoothed[1] = data[1];
+    // smoothed[n-2] = data[n-2]; smoothed[n-1] = data[n-1];
+
+    ofs.close();
+
+    return 0;
 }
 
 
@@ -762,6 +886,23 @@ int biaoding(){
 
 
 
+int findAllPeaks(const std::vector<LaserData>& smoothedData) {
+    int n = smoothedData.size();
+    
+    // 窗口半径设为2，即检查当前点是否为连续5个点中的最大值
+    for (int i = 2; i < n - 2; ++i) {
+        double current = smoothedData[i].distance_cm;
 
+        // 局部极大值判定：比左右各两个点都大（或相等）
+        if (current >= smoothedData[i-1].distance_cm &&
+            current >= smoothedData[i-2].distance_cm &&
+            current >= smoothedData[i+1].distance_cm &&
+            current >= smoothedData[i+2].distance_cm) {
+            printf("极大值点 ->id:%d, X轴像素: %d, 距离: %.2f cm\n", smoothedData[i].laser_id, smoothedData[i].x_pixel, current);
+        }
+    }
+
+    return 0;
+}
 
 

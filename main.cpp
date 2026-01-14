@@ -183,6 +183,13 @@ int main(int argc, char *argv[]){
             std::cout << "y_pixel: " << y_pixel << " 对应距离: " << distance << " cm" << std::endl;
         }
 
+        else if(strcmp(argv[1], "savgol")==0){
+            std::string filename = argv[2];
+            std::vector<LaserData> data = readLaserCSV(filename);
+            // savgolFilter5(data);
+            findAllPeaks(data);
+        }
+
         sleep(600);
         return 0;
     }
