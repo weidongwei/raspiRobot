@@ -9,6 +9,7 @@
 #include <sstream>
 #include <map>
 #include <algorithm>
+#include <set>
 
 #include "ImgProc.h"
 
@@ -24,6 +25,8 @@ cv::Mat MydistCoeffs = (cv::Mat_<double>(1, 5) <<
     -3.015609162190799);
 
 double reprojError = 0.138174;
+
+std::string base_path = "/home/dw/robot/image/proc_laser2/";
 
 
 
@@ -435,6 +438,7 @@ double y_pixel_to_distance2(double y_pixel) {
     return (d1 >= 0 && d1 <= 9) ? d1 : d2;
 }
 
+// 读取激光点CSV文件保存到LaserData数组中
 std::vector<LaserData> readLaserCSV(const std::string& filename) {
     std::vector<LaserData> dataList;
     std::ifstream file(filename);
@@ -488,17 +492,163 @@ std::vector<LaserData> readLaserCSV(const std::string& filename) {
     return dataList;
 }
 
+// 预处理函数(去畸变、绿色通道增强及平滑处理)
+cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut) {
+    // 去畸变 (保存 undistortedOut 用于后续绘图)
+    cv::undistort(input, undistortedOut, MycameraMatrix, MydistCoeffs);
 
+    // 通道增强（绿色提取）
+    std::vector<cv::Mat> bgr;
+    cv::split(undistortedOut, bgr);
+    cv::Mat diff = bgr[1] - 0.5 * (bgr[0] + bgr[2]);
+    
+    cv::normalize(diff, diff, 0, 255, cv::NORM_MINMAX);
+    diff.convertTo(diff, CV_8U);
+    cv::GaussianBlur(diff, diff, cv::Size(5, 5), 0);
+    return diff;
+}
 
-std::vector<LaserData> detect_laser_center(cv::Mat image) {
-    //打开csv文件
-    std::string path = "/home/dw/robot/image/proc_laser/";
-    std::string fname  = getTimeString() + "_points" + ".csv";
-    std::string savePath = path + fname;
-    std::ofstream ofs(savePath);
-    // 写表头
+// 轮廓检测与过滤(自适应阈值逻辑和保留最大两个轮廓)
+std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
+    double minVal, maxVal;
+    cv::minMaxLoc(diff, &minVal, &maxVal);
+    int threshold_value = static_cast<int>(std::max(30.0, maxVal * 0.8));
+
+    std::vector<std::vector<cv::Point>> contours;
+    // 自适应阈值循环
+    for (int iter = 0; iter < 100; ++iter) {
+        cv::Mat mask;
+        cv::threshold(diff, mask, threshold_value, 255, cv::THRESH_BINARY);
+        cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+        if ((contours.size() <= 2 && !contours.empty()) || threshold_value <= 50) break;
+        threshold_value -= 3;
+    }
+
+    // 只保留面积最大的两个
+    std::sort(contours.begin(), contours.end(), [](const auto& a, const auto& b) {
+        return cv::contourArea(a) > cv::contourArea(b);
+    });
+    
+    if (contours.size() > 2) contours.resize(2);
+    return contours;
+}
+
+// 中心线几何提取
+std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat& diff) {
+    std::vector<LaserContour> laser_contours;
+
+    for (int i = 0; i < contours.size(); ++i) {
+        cv::Mat mask = cv::Mat::zeros(diff.size(), CV_8U);
+        cv::drawContours(mask, contours, i, cv::Scalar(255), cv::FILLED);
+        
+        cv::Rect box = cv::boundingRect(contours[i]);
+        LaserContour lc;
+        double y_sum = 0;
+
+        for (int x = box.x; x < box.x + box.width; ++x) {
+            int first_y = -1, last_y = -1;
+            for (int y = box.y; y < box.y + box.height; ++y) {
+                if (mask.at<uchar>(y, x) > 0 && diff.at<uchar>(y, x) > 0) {
+                    if (first_y == -1) first_y = y;
+                    last_y = y;
+                }
+            }
+            if (first_y != -1) {
+                int center_y = (first_y + last_y) / 2;
+                lc.xs.push_back(x);
+                lc.ys.push_back(center_y);
+                y_sum += center_y;
+            }
+        }
+        if (!lc.ys.empty()) {
+            lc.y_average = y_sum / lc.ys.size();
+            laser_contours.push_back(lc);
+        }
+    }
+    
+    // 判定上下激光类型
+    if (laser_contours.size() == 2) {
+        bool firstIsUpper = laser_contours[0].y_average < laser_contours[1].y_average;
+        laser_contours[0].laser_type = firstIsUpper ? 1 : 2;
+        laser_contours[1].laser_type = firstIsUpper ? 2 : 1;
+    } else if (laser_contours.size() == 1) {
+        laser_contours[0].laser_type = 1; // 默认
+    }
+    
+    return laser_contours;
+}
+
+// 保存结果与可视化
+void saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData) {
+    // 红色轮廓绘制
+    for (const auto& contour : contours) {
+        double area = cv::contourArea(contour);
+        if (area > canvas.cols * canvas.rows * 0.0002) {
+            cv::drawContours(canvas, std::vector<std::vector<cv::Point>>{contour}, -1, cv::Scalar(0, 0, 255), 1);
+        }
+    }
+
+    std::string timeStr = getTimeString();
+    std::ofstream ofs(base_path + timeStr + "_points.csv");
     ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
 
+    cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
+
+    // 提取数据并准备画中心点
+    for (const auto& lc : lcs) {
+        for (size_t i = 0; i < lc.xs.size(); ++i) {
+            int x = lc.xs[i], y = lc.ys[i];
+            double dis = (lc.laser_type == 1) ? y_pixel_to_distance1(y) : y_pixel_to_distance2(y);
+            if (dis <= 0) continue;
+
+            outData.push_back({lc.laser_type, x, y, dis});
+            ofs << lc.laser_type << "," << x << "," << y << "," << dis << "\n";
+            mask_center.at<uchar>(y, x) = 255;
+        }
+    }
+    
+    // 闭运算修复断线并画出蓝色中心点
+    cv::morphologyEx(mask_center, mask_center, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 1)));
+    for (int y = 0; y < mask_center.rows; ++y) {
+        for (int x = 0; x < mask_center.cols; ++x) {
+            if (mask_center.at<uchar>(y, x) > 0)
+                cv::circle(canvas, cv::Point(x, y), 1, cv::Scalar(255, 0, 0), -1);
+        }
+    }
+
+    cv::imwrite(base_path + timeStr + "_detected.jpg", canvas);
+    ofs.close();
+}
+
+// 检测激光中心线主函数
+std::vector<LaserData> detectLaserCenter(cv::Mat image) {
+    cv::Mat undistortedImg;
+    std::vector<LaserData> laserPoints;
+
+    // 1. 预处理
+    cv::Mat diff = preprocessLaserImage(image, undistortedImg);
+
+    // 2. 找轮廓
+    auto contours = getLaserContours(diff);
+    if (contours.empty()) return {};
+
+    // 3. 提取中心线坐标
+    auto lcs = extractCenterlinePoints(contours, diff);
+
+    // 4. 保存与可视化
+    saveAndVisualize(contours, lcs, undistortedImg, diff, laserPoints);
+
+    std::cout << "激光中心线检测完成。" << std::endl;
+    return laserPoints;
+}
+
+
+
+
+
+// 检测图像中的激光中心线,保存到CSV文件和LaserData数组中
+std::vector<LaserData> detect_laser_center(cv::Mat image) {
     // 去畸变
     cv::Mat img;
     cv::undistort(image, img, MycameraMatrix, MydistCoeffs);
@@ -521,7 +671,6 @@ std::vector<LaserData> detect_laser_center(cv::Mat image) {
 
     // 轮廓检测
     std::vector<std::vector<cv::Point>> contours;
-    // cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
     // ====== 根据轮廓个数来调整阈值 ======
     int iter = 0;
@@ -533,7 +682,6 @@ std::vector<LaserData> detect_laser_center(cv::Mat image) {
         if ((contours.size() <= 2 && contours.size() > 0) || threshold_value <= 50){
             break;
         }
-        printf("调整阈值中，当前阈值: %d, 检测到轮廓数: %lu\n", threshold_value, contours.size());
         threshold_value -= 3;
     }
 
@@ -647,6 +795,14 @@ std::vector<LaserData> detect_laser_center(cv::Mat image) {
         laser_contours[0].laser_type = 2;
         laser_contours[1].laser_type = 1;
     }
+
+    //打开csv文件
+    std::string fname  = getTimeString() + "_points" + ".csv";
+    std::string savePath = base_path + fname;
+    std::ofstream ofs(savePath);
+    // 写表头
+    ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
+
     for (const auto& lc : laser_contours) {
 
         for (size_t i = 0; i < lc.xs.size(); ++i) {
@@ -681,7 +837,7 @@ std::vector<LaserData> detect_laser_center(cv::Mat image) {
     }
 
     
-    std::string base_path = "/home/dw/robot/image/proc_laser/";
+    
     std::string filename1  = getTimeString() + "_diff" + ".jpg";
     std::string filename2  = getTimeString() + "_mask" +  ".jpg";
     std::string filename3  = getTimeString() + "_detected" + ".jpg";
@@ -698,15 +854,12 @@ std::vector<LaserData> detect_laser_center(cv::Mat image) {
     return laserPoints;
 }
 
-
-
 // 平滑11个点
 std::vector<LaserData> smooth(const std::vector<LaserData> data) {
     std::vector<LaserData> smoothedData;
     //打开csv文件
-    std::string path = "/home/dw/robot/image/proc_laser/";
     std::string fname  = getTimeString() + "_points_smooth" + ".csv";
-    std::string savePath = path + fname;
+    std::string savePath = base_path + fname;
     std::ofstream ofs(savePath);
     // 写表头
     ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
@@ -739,54 +892,7 @@ std::vector<LaserData> smooth(const std::vector<LaserData> data) {
     return smoothedData;
 }
 
-//趋势坍塌分析函数
-SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx) {
-    SeamResult res;
-    res.id = data[peakIdx].laser_id;
-    res.x_peak = data[peakIdx].x_pixel;
-    res.dist = data[peakIdx].distance_cm;
-    
-    int n = data.size();
-    
-    // 向左寻找坡脚
-    int left = peakIdx;
-    int patience = 10;
-    for (int j = peakIdx - 1; j > 0; --j) {
-        if (data[j].distance_cm < data[j+1].distance_cm) {
-            patience = 10;
-        } else {patience--;}
-        left = j;
-        if (patience <= 0) break;
-    }
-
-    // 向右寻找坡脚
-    int right = peakIdx;
-    patience = 10;
-    for (int j = peakIdx + 1; j < n; ++j) {
-        if (data[j].distance_cm < data[j-1].distance_cm) {
-            patience = 10;
-        } else {patience--;}
-        right = j;
-        if (patience <= 0) break;
-    }
-
-    res.left_foot = data[left].x_pixel;
-    res.right_foot = data[right].x_pixel;
-
-    // 获取凹陷宽度和深度
-    res.width = std::abs(data[right].x_pixel - data[left].x_pixel);
-    double base_dist = (data[left].distance_cm + data[right].distance_cm) / 2.0;
-    res.depth = abs(res.dist - base_dist);
-
-    // 凹陷评分
-    double s_width = std::min(res.width / 60.0, 1.0);
-    double s_depth = std::min(res.depth / 0.2, 1.0);
-    res.score = s_width * 0.4 + s_depth * 0.6;
-
-    return res;
-}
-
-// 峰值竞争
+// 峰值竞争(峰值索引, 激光数据, 窗口宽度)
 std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::vector<LaserData>& data, int win) {
     if (peakIndices.empty()) return {};
 
@@ -822,8 +928,55 @@ std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::
     return filtered;
 }
 
+// 趋势坍塌分析函数(激光数据, 峰值索引, 耐心值, 最佳宽度, 最佳深度, 宽度权重比, 深度权重比)
+SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx, int patience_limit, double best_width, double best_depth, double ratio_width, double ratio_depth) {
+    SeamResult res;
+    res.id = data[peakIdx].laser_id;
+    res.x_peak = data[peakIdx].x_pixel;
+    res.dist = data[peakIdx].distance_cm;
+    
+    int n = data.size();
+    
+    // 向左寻找坡脚
+    int left = peakIdx;
+    int patience = patience_limit;
+    for (int j = peakIdx - 1; j > 0; --j) {
+        if (data[j].distance_cm < data[j+1].distance_cm) {
+            patience = patience_limit;
+        } else {patience--;}
+        left = j;
+        if (patience <= 0) break;
+    }
+
+    // 向右寻找坡脚
+    int right = peakIdx;
+    patience = patience_limit;
+    for (int j = peakIdx + 1; j < n; ++j) {
+        if (data[j].distance_cm < data[j-1].distance_cm) {
+            patience = patience_limit;
+        } else {patience--;}
+        right = j;
+        if (patience <= 0) break;
+    }
+
+    res.left_foot = data[left].x_pixel;
+    res.right_foot = data[right].x_pixel;
+
+    // 获取凹陷宽度和深度
+    res.width = std::abs(data[right].x_pixel - data[left].x_pixel);
+    double base_dist = (data[left].distance_cm + data[right].distance_cm) / 2.0;
+    res.depth = abs(res.dist - base_dist);
+
+    // 凹陷评分
+    double s_width = std::min(res.width / best_width, 1.0);
+    double s_depth = std::min(res.depth / best_depth, 1.0);
+    res.score = s_width * ratio_width + s_depth * ratio_depth;
+
+    return res;
+}
+
 // 主识别函数
-std::vector<SeamResult> findSeam(const std::vector<LaserData>& smoothedData) {
+std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData) {
     int n = smoothedData.size();
     if (n < 15) return {};
 
@@ -840,10 +993,11 @@ std::vector<SeamResult> findSeam(const std::vector<LaserData>& smoothedData) {
     // 调用峰值竞争函数
     std::vector<int> clearPeaks = suppress_peaks(rawPeakIndices, smoothedData, 20);
     
+    // 保存所有凹陷结果
     std::map<int, std::vector<SeamResult>> groupResults;
     for (int p_idx : clearPeaks) {
         // 调用趋势坍塌分析函数
-        SeamResult current = analyzeSeamStructure(smoothedData, p_idx);
+        SeamResult current = analyzeSeamStructure(smoothedData, p_idx, 10, 60.0, 0.2, 0.4, 0.6);
         // 只保留中间区域的橘缝
         if(current.x_peak>120 && current.x_peak<520){
             groupResults[current.id].push_back(current);
@@ -858,23 +1012,16 @@ std::vector<SeamResult> findSeam(const std::vector<LaserData>& smoothedData) {
                 current.score);
         }
     }
-    // 求出两条最像橘缝的组合
 
-    // 橘缝匹配的阈值
+    // 求出最像橘缝的凹陷组合
     const int X_MATCH_THRESHOLD = 30; 
 
-    // 定义一个结构体来存放匹配成功的缝对
-    struct MatchedSeamPair {
-        SeamResult s1;
-        SeamResult s2;
-        double total_score;
-    };
+    
+    std::vector<MatchedSeamPair> tempMatchedPairs;
+    std::vector<MatchedSeamPair> finalMatchedPairs;
 
-    std::vector<MatchedSeamPair> matchedPairs;
-
-    // 假设 groupResults[1] 是 ID1 的缝列表，groupResults[2] 是 ID2 的
-    auto& list1 = groupResults[1];
-    auto& list2 = groupResults[2];
+    std::vector<SeamResult> list1 = groupResults[1];
+    std::vector<SeamResult> list2 = groupResults[2];
 
     // 嵌套循环进行交叉匹配
     for (const auto& s1 : list1) {
@@ -886,83 +1033,120 @@ std::vector<SeamResult> findSeam(const std::vector<LaserData>& smoothedData) {
                 MatchedSeamPair mp;
                 mp.s1 = s1;
                 mp.s2 = s2;
-                // 总分为两点分数之和（也可以考虑减去 dx 作为惩罚）
-                mp.total_score = s1.score + s2.score; 
-                printf("匹配成功的橘缝对: ID1 x_peak=%d, ID2 x_peak=%d, dx=%d, total_score=%.2f\n",
-                        s1.x_peak, s2.x_peak, dx, mp.total_score);
-                matchedPairs.push_back(mp);
+                // 总分为两点分数之和
+                mp.total_score = s1.score + s2.score;
+                tempMatchedPairs.push_back(mp);
             }
         }
     }
 
     // 对匹配对按总分从高到低排序
-    std::sort(matchedPairs.begin(), matchedPairs.end(), [](const MatchedSeamPair& a, const MatchedSeamPair& b) {
+    std::sort(tempMatchedPairs.begin(), tempMatchedPairs.end(), [](const MatchedSeamPair& a, const MatchedSeamPair& b) {
         return a.total_score > b.total_score;
     });
 
-    // 提取最终结果（取前两个最匹配的组）
-    std::vector<SeamResult> finalSeam;
-    int max_pairs = std::min((int)matchedPairs.size(), 3); // 最多取两组
-
-    for (int i = 0; i < max_pairs; ++i) {
-        finalSeam.push_back(matchedPairs[i].s1);
-        finalSeam.push_back(matchedPairs[i].s2);
+    for(const auto& match : tempMatchedPairs){
+        printf("暂时匹配成功的橘缝对(顺序): ID1 x_peak=%d, ID2 x_peak=%d, total_score=%.2f\n",
+                match.s1.x_peak, match.s2.x_peak, match.total_score);
     }
 
-    for (const auto& seam : finalSeam) {
-        printf("最终橘缝结果: id=%d, x_peak=%d, dist=%.2f cm, left_foot=%d, right_foot=%d, width=%d, depth=%.2f cm, score=%.2f\n",
-                seam.id,
-                seam.x_peak,
-                seam.dist,
-                seam.left_foot,
-                seam.right_foot,
-                seam.width,
-                seam.depth,
-                seam.score);
+    std::set<int> usedX1; // 记录 list1 中已使用的 x_peak
+    std::set<int> usedX2; // 记录 list2 中已使用的 x_peak
+
+    for (const auto& match : tempMatchedPairs) {
+        // 检查这两点的 x_peak 是否已经在“已使用”名单里
+        // count() 返回 0 表示不在名单里
+        if (usedX1.count(match.s1.x_peak) == 0 && usedX2.count(match.s2.x_peak) == 0) {
+            
+            // 标记这两个坐标为已使用
+            usedX1.insert(match.s1.x_peak);
+            usedX2.insert(match.s2.x_peak);
+
+            // 加入最终结果
+            finalMatchedPairs.push_back(match);
+            
+            printf("最终匹配成功: ID1[x:%d] - ID2[x:%d], 总分: %.2f\n", 
+                    match.s1.x_peak, match.s2.x_peak, match.total_score);
+            
+            if (finalMatchedPairs.size() >= 10) break; 
+        }
     }
-    return finalSeam;
+    printf("最终橘缝对数量: %lu\n", finalMatchedPairs.size());
+
+    for (const auto& seam : finalMatchedPairs) {
+        printf("最终橘缝对结果: id=%d, x_peak=%d, dist=%.2f cm, left_foot=%d, right_foot=%d, width=%d, depth=%.2f cm, score=%.2f\n",
+                seam.s1.id,
+                seam.s1.x_peak,
+                seam.s1.dist,
+                seam.s1.left_foot,
+                seam.s1.right_foot,
+                seam.s1.width,
+                seam.s1.depth,
+                seam.total_score);
+        printf("               id=%d, x_peak=%d, dist=%.2f cm, left_foot=%d, right_foot=%d, width=%d, depth=%.2f cm, score=%.2f\n",
+                seam.s2.id,
+                seam.s2.x_peak,
+                seam.s2.dist,
+                seam.s2.left_foot,
+                seam.s2.right_foot,
+                seam.s2.width,
+                seam.s2.depth,
+                seam.total_score);
+    }
+    printf("橘缝识别完成。\n");
+    return finalMatchedPairs;
 }
 
-
-int drawSeam(cv::Mat displayImage, const std::vector<SeamResult> results, const std::vector<LaserData> data) {
-    if (results.size() < 2) return 0;
+// 画出橘缝线
+cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data) {
+    if (results.size() < 1) return displayImage;
     int id = 1;
-    for(int i=0; i<results.size(); i+=2){
+    for(int i=0; i<results.size(); i++){
+
+        double ratio = (results.size() > 1) ? (double)i / (results.size() - 1) : 0.0;
+        
+        // 起始颜色 (纯红): (0, 0, 255)
+        // 结束颜色 (浅粉): (180, 180, 255) -> 你可以调整 180 这个值，越大越白
+        int b = (int)(0 + 180 * ratio); 
+        int g = (int)(0 + 180 * ratio);
+        int r = 255; 
+        cv::Scalar currentColor(b, g, r);
+
         // 查找对应的 y_pixel
         int result_y1 = -1;
         int result_y2 = -1;
         // 第一组
         auto it1 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
-            return item.laser_id == id && item.x_pixel == results[i].x_peak;
+            return item.laser_id == id && item.x_pixel == results[i].s1.x_peak;
         });
         if (it1 != data.end()) {
             result_y1 = it1->y_pixel;
-            printf("找到 x:%d y: %d\n", results[i].x_peak, result_y1);
+            printf("找到 x:%d y: %d\n", results[i].s1.x_peak, result_y1);
         }
         // 第二组
         auto it2 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
-            return item.laser_id == id+1 && item.x_pixel == results[i+1].x_peak;
+            return item.laser_id == id+1 && item.x_pixel == results[i].s2.x_peak;
         });
         if (it2 != data.end()) {
             result_y2 = it2->y_pixel;
-            printf("找到 x: %d y: %d\n", results[i+1].x_peak, result_y2);
+            printf("找到 x: %d y: %d\n", results[i].s2.x_peak, result_y2);
         }
-        cv::Point p1(results[i].x_peak, result_y1); 
-        cv::Point p2(results[i+1].x_peak, result_y2);
+        cv::Point p1(results[i].s1.x_peak, result_y1); 
+        cv::Point p2(results[i].s2.x_peak, result_y2);
 
         // 画连接线（亮黄色）
-        cv::line(displayImage, p1, p2, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+        cv::line(displayImage, p1, p2, currentColor, 2, cv::LINE_AA);
 
         // 画出两个关键点（红色实心圆）
-        cv::circle(displayImage, p1, 6, cv::Scalar(0, 0, 255), -1);
-        cv::circle(displayImage, p2, 6, cv::Scalar(0, 0, 255), -1);
+        cv::circle(displayImage, p1, 3, cv::Scalar(0, 0, 255), -1);
+        cv::circle(displayImage, p2, 3, cv::Scalar(0, 0, 255), -1);
     }
-    std::string base_path = "/home/dw/robot/image/proc_laser/";
+
     std::string filename  = getTimeString() + "_displayImage" + ".jpg";
     std::string save_path = base_path + filename;
     cv::imwrite(save_path, displayImage);
 
-    return 0;
+    return displayImage;
 
 }
 
