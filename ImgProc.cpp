@@ -26,7 +26,7 @@ cv::Mat MydistCoeffs = (cv::Mat_<double>(1, 5) <<
 
 double reprojError = 0.138174;
 
-std::string base_path = "/home/dw/robot/image/proc_laser2/";
+std::string base_path = "/home/dw/robot/image/proc_laser5/";
 
 
 
@@ -1061,12 +1061,14 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
             // 标记这两个坐标为已使用
             usedX1.insert(match.s1.x_peak);
             usedX2.insert(match.s2.x_peak);
-
-            // 加入最终结果
-            finalMatchedPairs.push_back(match);
-            
-            printf("最终匹配成功: ID1[x:%d] - ID2[x:%d], 总分: %.2f\n", 
+            if(match.total_score > 1){
+                // 加入最终结果
+                finalMatchedPairs.push_back(match);
+                printf("最终匹配成功: ID1[x:%d] - ID2[x:%d], 总分: %.2f\n", 
                     match.s1.x_peak, match.s2.x_peak, match.total_score);
+            }
+            
+            
             
             if (finalMatchedPairs.size() >= 10) break; 
         }

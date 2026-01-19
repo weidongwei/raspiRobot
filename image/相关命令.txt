@@ -25,3 +25,4 @@ git add .
 git commit -m ""
 //使用 SSH 将代码推送到 GitHub
 git push -u origin master
+git push

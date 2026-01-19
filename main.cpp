@@ -140,7 +140,7 @@ int main(int argc, char *argv[]){
             run_pump(time);
         }
 
-        else if(strcmp(argv[1], "laser")==0){
+        else if(strcmp(argv[1], "picandlaser")==0){
             setLaserStatus(true); 
             wakeupThreadWait(THR_LASER_CONTROL);
             wakeupThreadWait(THR_PHOTO_CONTROL);
@@ -166,7 +166,7 @@ int main(int argc, char *argv[]){
             set_motor_id(motor_id, new_id);
         }
 
-        else if(strcmp(argv[1], "takepic")==0){
+        else if(strcmp(argv[1], "laser")==0){
             setLaserStatus(true); 
             wakeupThreadWait(THR_LASER_CONTROL);
             takePic();
@@ -189,7 +189,7 @@ int main(int argc, char *argv[]){
             std::vector<LaserData> data = detectLaserCenter(cv::imread(addr));
             std::vector<LaserData> smoothData = smooth(data);
             std::vector<MatchedSeamPair> results = findSeam(smoothData);
-            std::string base = "/home/dw/robot/image/proc_laser2/";
+            std::string base = "/home/dw/robot/image/proc_laser4/";
             std::string filename  = getTimeString() + "_detected" + ".jpg";
             std::string save = base + filename;
             drawSeam(cv::imread(save), results, data);
@@ -198,8 +198,7 @@ int main(int argc, char *argv[]){
         else if(strcmp(argv[1], "batchfindseam")==0){
             std::string folder = "/home/dw/robot/image/video/";
             std::vector<cv::String> filenames;
-            cv::glob(folder + "origin_*.jpg", filenames); // 自动按名称排序读取
-            cv::namedWindow("Laser Video Player", cv::WINDOW_AUTOSIZE);
+            cv::glob(folder + "origin_20260113_*.jpg", filenames); // 自动按名称排序读取
             for (const auto& file : filenames) {
                 cv::Mat frame = cv::imread(file);
                 if (frame.empty()) continue;
@@ -207,28 +206,27 @@ int main(int argc, char *argv[]){
                 std::vector<LaserData> data = detectLaserCenter(frame);
                 std::vector<LaserData> smoothData = smooth(data);
                 std::vector<MatchedSeamPair> results = findSeam(smoothData);
-                std::string base = "/home/dw/robot/image/proc_laser2/";
+                std::string base = "/home/dw/robot/image/proc_laser5/";
                 std::string filename  = getTimeString() + "_detected" + ".jpg";
                 std::string save = base + filename;
                 cv::Mat finaldrawSeam = drawSeam(cv::imread(save), results, data);
-                cv::imshow("Laser Video Player", finaldrawSeam);
-
-                char c = (char)cv::waitKey(1000);
+                sleep(1);
             }
 
             cv::destroyAllWindows();
         }
 
         else if(strcmp(argv[1], "playvideo")==0){
-            std::string folder = "/home/dw/robot/image/proc_laser2/";
+            std::string folder = "/home/dw/robot/image/proc_laser5/";
             std::vector<cv::String> filenames;
-            cv::glob(folder + "*_displayImage.jpg", filenames); // 自动按名称排序读取
+            // cv::glob(folder + "*_displayImage.jpg", filenames);
+            cv::glob(folder + "20260119*.jpg", filenames);
             cv::namedWindow("Laser Video Player", cv::WINDOW_AUTOSIZE);
             for (const auto& file : filenames) {
                 cv::Mat frame = cv::imread(file);
                 if (frame.empty()) continue;
                 cv::imshow("Laser Video Player", frame);
-                char c = (char)cv::waitKey(2000);
+                char c = (char)cv::waitKey(1000);
             }
             cv::destroyAllWindows();
         }
