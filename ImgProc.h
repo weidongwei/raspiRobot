@@ -4,6 +4,38 @@
 #include <opencv2/opencv.hpp>
 #include <vector>
 
+// 视觉检测参数
+struct VisualConfig {
+    // 数据保存路径
+    std::string base_path = "/home/dw/robot/image/proc_laser6/";
+    // 相机矩阵和畸变参数
+    cv::Mat MycameraMatrix = (cv::Mat_<double>(3, 3) <<
+    622.8518195651313, 0, 324.9937701989255,
+    0, 622.3557983623182, 240.0932694742121,
+    0, 0, 1);
+    cv::Mat MydistCoeffs = (cv::Mat_<double>(1, 5) <<
+        -0.2417610723353469, 1.347540335379867,
+        -0.001577442260184354, -0.001153209194483007,
+        -3.015609162190799);
+    double reprojError = 0.138174;
+    // 自适应阈值参数
+    int counter_maxsize;            // 轮廓最大值
+    int threshold_value_min;        // 最小阈值
+    int threshold_value_rate;       // 每次迭代减少的阈值
+    // 峰值竞争参数
+    int peak_suppress_win;          // 峰值抑制窗口
+    //趋势坍塌分析函数参数
+    int patience_limit;             // 耐心值
+    double ratio_width;             // 宽度权重比
+    double ratio_depth;             // 深度权重比
+    double best_width;              // 最佳宽度
+    double best_depth;              // 最佳深度
+    // 匹配橘缝对
+    int dx_between_seams_min;       // 相邻橘缝最小距离
+    double total_score_min;         // 综合评分最低分数
+};
+extern VisualConfig vConfig;
+
 // 激光轮廓结构体
 struct LaserContour {
     std::vector<int> xs, ys;
@@ -38,23 +70,15 @@ struct MatchedSeamPair {
     double total_score;
 };
 
+bool loadVisualConfig(VisualConfig& cfg, const std::string& filename);
+std::string getTimeString();
 int takePic();
 int takeVedio();
 int saveVedio();
 int userImgProc0(cv::Mat *theMat, long beginTime, long afterTime);
 int userImgProc1(cv::Mat *theMat, long beginTime, long afterTime);
-std::vector<LaserData> detect_laser_center(cv::Mat img);
-std::string getTimeString();
 
-bool calibrateCameraFromImages(
-    const std::vector<cv::Mat>& images,   // 标定图像
-    cv::Size boardSize,                    // 内角点数量 (9,6)
-    float squareSize,                      // 格子尺寸 (mm)
-    cv::Mat& cameraMatrix,                 // 输出：相机内参
-    cv::Mat& distCoeffs,                   // 输出：畸变参数
-    double& reprojError,                   // 输出：重投影误差
-    const std::string& debugSaveDir        // 中间图像保存目录
-);
+bool calibrateCameraFromImages( const std::vector<cv::Mat>& images, cv::Size boardSize, float squareSize, cv::Mat& cameraMatrix, cv::Mat& distCoeffs, double& reprojError, const std::string& debugSaveDir );
 int biaoding();
 double y_pixel_to_distance1(double y_pixel);
 double y_pixel_to_distance2(double y_pixel);
@@ -63,16 +87,17 @@ std::vector<LaserData> readLaserCSV(const std::string& filename);
 cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut);
 std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff);
 std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat& diff);
-void saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData);
-std::vector<LaserData> detectLaserCenter(cv::Mat image);
+cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData);
+std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut);
 
 
 std::vector<LaserData> smooth(const std::vector<LaserData> data);
-SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx, int patience_limit, double best_width, double best_depth, double ratio_width, double ratio_depth);
-std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::vector<LaserData>& data, int win);
+SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx);
+std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::vector<LaserData>& data);
 std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData);
 cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data);
 
+int detectMain(cv::Mat originImage);
 
 
 #endif // IMGPROC_H

@@ -1,0 +1,14 @@
+{
+    "base_path": "/home/dw/robot/image/proc_laser6/",
+    "counter_maxsize": 2,
+    "threshold_value_min": 100,
+    "threshold_value_rate": 3,
+    "peak_suppress_win": 20,
+    "patience_limit": 10,
+    "ratio_width": 0.4,
+    "ratio_depth": 0.6,
+    "best_width": 60.0,
+    "best_depth": 0.2,
+    "dx_between_seams_min": 30,
+    "total_score_min": 1.0
+}

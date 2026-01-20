@@ -28,7 +28,7 @@ THREADINFO threadInfo[TOTALTHREADNUM] = {
 int main(int argc, char *argv[]){
     // 初始化线程信息
     init_socket();
-
+    
     pthread_t thread[TOTALTHREADNUM];  
     beginExit = false;
     laserStatus = false;
@@ -64,6 +64,7 @@ int main(int argc, char *argv[]){
     sleep(1);
     wakeupThreadWait(THR_CAN_RECEIVE);
     // wakeupThreadWait(THR_MOTOR_STATUS);
+    loadVisualConfig(vConfig, "/home/dw/robot/visualConfig.json");
     sleep(1);
     if(argc>1) {
         if(strcmp(argv[1], "stop")==0)              { int motor_id = atoi(argv[2]); stop_motor(motor_id); }
@@ -131,23 +132,9 @@ int main(int argc, char *argv[]){
             emm_motor_move(motor_id, angle);
         }
 
-        else if(strcmp(argv[1], "takeVideo")==0){
-            wakeupThreadWait(THR_PHOTO_CONTROL);
-        }
-
         else if(strcmp(argv[1], "pump")==0){
             float time = atof(argv[2]);
             run_pump(time);
-        }
-
-        else if(strcmp(argv[1], "picandlaser")==0){
-            setLaserStatus(true); 
-            wakeupThreadWait(THR_LASER_CONTROL);
-            wakeupThreadWait(THR_PHOTO_CONTROL);
-        }
-
-        else if(strcmp(argv[1], "imgproc")==0){
-            detect_laser_center(cv::imread("/home/dw/robot/image/origin_image/origin_20260105_181951.jpg"));
         }
 
         else if(strcmp(argv[1], "read_motor_parameter_x")==0){
@@ -166,33 +153,27 @@ int main(int argc, char *argv[]){
             set_motor_id(motor_id, new_id);
         }
 
+        // ----------------------------------------------------------
+
+        else if(strcmp(argv[1], "picandlaser")==0){
+            setLaserStatus(true); 
+            wakeupThreadWait(THR_LASER_CONTROL);
+            wakeupThreadWait(THR_PHOTO_CONTROL);
+        }
+
         else if(strcmp(argv[1], "laser")==0){
             setLaserStatus(true); 
             wakeupThreadWait(THR_LASER_CONTROL);
             takePic();
         }
 
-        else if(strcmp(argv[1], "procimg")==0){
-            std::string addr = argv[2];
-            detect_laser_center(cv::imread(addr));
+        else if(strcmp(argv[1], "takeVideo")==0){
+            wakeupThreadWait(THR_PHOTO_CONTROL);
         }
-
-        else if(strcmp(argv[1], "y2d")==0){
-            double y_pixel = atof(argv[2]);
-            double distance = y_pixel_to_distance1(y_pixel);
-            std::cout << "y_pixel: " << y_pixel << " 对应距离: " << distance << " cm" << std::endl;
-        }
-
 
         else if(strcmp(argv[1], "findseam")==0){
             std::string addr = argv[2];
-            std::vector<LaserData> data = detectLaserCenter(cv::imread(addr));
-            std::vector<LaserData> smoothData = smooth(data);
-            std::vector<MatchedSeamPair> results = findSeam(smoothData);
-            std::string base = "/home/dw/robot/image/proc_laser4/";
-            std::string filename  = getTimeString() + "_detected" + ".jpg";
-            std::string save = base + filename;
-            drawSeam(cv::imread(save), results, data);
+            detectMain(cv::imread(addr));
         }
 
         else if(strcmp(argv[1], "batchfindseam")==0){
@@ -203,17 +184,10 @@ int main(int argc, char *argv[]){
                 cv::Mat frame = cv::imread(file);
                 if (frame.empty()) continue;
 
-                std::vector<LaserData> data = detectLaserCenter(frame);
-                std::vector<LaserData> smoothData = smooth(data);
-                std::vector<MatchedSeamPair> results = findSeam(smoothData);
-                std::string base = "/home/dw/robot/image/proc_laser5/";
-                std::string filename  = getTimeString() + "_detected" + ".jpg";
-                std::string save = base + filename;
-                cv::Mat finaldrawSeam = drawSeam(cv::imread(save), results, data);
+                detectMain(frame);
+
                 sleep(1);
             }
-
-            cv::destroyAllWindows();
         }
 
         else if(strcmp(argv[1], "playvideo")==0){
@@ -225,7 +199,9 @@ int main(int argc, char *argv[]){
             for (const auto& file : filenames) {
                 cv::Mat frame = cv::imread(file);
                 if (frame.empty()) continue;
+
                 cv::imshow("Laser Video Player", frame);
+
                 char c = (char)cv::waitKey(1000);
             }
             cv::destroyAllWindows();

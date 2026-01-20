@@ -10,25 +10,34 @@
 #include <map>
 #include <algorithm>
 #include <set>
+#include <nlohmann/json.hpp>
 
 #include "ImgProc.h"
+using json = nlohmann::json;
 
 
-cv::Mat MycameraMatrix = (cv::Mat_<double>(3, 3) <<
-    622.8518195651313, 0, 324.9937701989255,
-    0, 622.3557983623182, 240.0932694742121,
-    0, 0, 1);
+VisualConfig vConfig;
 
-cv::Mat MydistCoeffs = (cv::Mat_<double>(1, 5) <<
-    -0.2417610723353469, 1.347540335379867,
-    -0.001577442260184354, -0.001153209194483007,
-    -3.015609162190799);
-
-double reprojError = 0.138174;
-
-std::string base_path = "/home/dw/robot/image/proc_laser5/";
-
-
+// 加载json配置文件
+bool loadVisualConfig(VisualConfig& cfg, const std::string& filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) return false;
+    json j;
+    file >> j;
+    cfg.base_path = j["base_path"];
+    cfg.counter_maxsize = j["counter_maxsize"];
+    cfg.threshold_value_min = j["threshold_value_min"];
+    cfg.threshold_value_rate = j["threshold_value_rate"];
+    cfg.peak_suppress_win = j["peak_suppress_win"];
+    cfg.patience_limit = j["patience_limit"];
+    cfg.ratio_width = j["ratio_width"];
+    cfg.ratio_depth = j["ratio_depth"];
+    cfg.best_width = j["best_width"];
+    cfg.best_depth = j["best_depth"];
+    cfg.dx_between_seams_min = j["dx_between_seams_min"];
+    cfg.total_score_min = j["total_score_min"];
+    return true;
+}
 
 // 获取当前时间字符串
 std::string getTimeString(){
@@ -48,9 +57,6 @@ std::string getTimeString(){
 }
 // 采集图像
 int takeVedio(){
-    std::string base_path = "/home/dw/robot/image/origin_image/";
-    std::string filename  = "origin_" + getTimeString() + ".jpg";
-    std::string save_path = base_path + filename;
     cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
@@ -61,7 +67,7 @@ int takeVedio(){
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
     cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);  // 有的驱动 1=手动，3=自动，需测试
-    cap.set(cv::CAP_PROP_EXPOSURE, 300);     // 曝光时间整数us
+    cap.set(cv::CAP_PROP_EXPOSURE, 200);     // 曝光时间整数us
     cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
     cap.set(cv::CAP_PROP_BRIGHTNESS, 50);  // 设置亮度为 50(-64 ~ 64)
 
@@ -75,13 +81,17 @@ int takeVedio(){
             std::cerr << "无法获取图像帧。" << std::endl;
             break;
         }
-        cv::imshow("Camera Video", frame);
-        cv::waitKey(10);
-        // cv::imwrite(save_path, frame); 
-        // std::cout << "图像已保存到 " << save_path << std::endl;
-        // sleep(1);
-        // detect_laser_edge(cv::imread("/home/dw/robot/image/1.jpg"));
-        // detect_laser_center(cv::imread("/home/dw/robot/image/1.jpg"));
+        cv::Mat undistorted;
+        cv::undistort(frame, undistorted, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
+
+        cv::Mat displayImage;
+        std::vector<LaserData> data = detectLaserCenter(undistorted, &displayImage);
+        std::vector<LaserData> smoothData = smooth(data);
+        std::vector<MatchedSeamPair> results = findSeam(smoothData);
+        cv::Mat finalMat = drawSeam(displayImage, results, data);
+
+        cv::imshow("Camera Video", finalMat);
+        cv::waitKey(100);
     }
     cap.release();
     cv::destroyAllWindows();
@@ -90,7 +100,6 @@ int takeVedio(){
 
 // 保存图像集
 int saveVedio(){
-    
     cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
@@ -115,12 +124,16 @@ int saveVedio(){
             std::cerr << "无法获取图像帧。" << std::endl;
             break;
         }
-        std::string base_path = "/home/dw/robot/image/video/";
+
+        cv::Mat undistorted;
+        cv::undistort(frame, undistorted, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
+
+        std::string video_path = "/home/dw/robot/image/video/";
         std::string filename  = "origin_" + getTimeString() + ".jpg";
-        std::string save_path = base_path + filename;
-        // cv::imshow("Camera Video", frame);
+        std::string save_path = video_path + filename;
+        // cv::imshow("Camera Video", undistorted);
         cv::waitKey(10);
-        cv::imwrite(save_path, frame); 
+        cv::imwrite(save_path, undistorted); 
         std::cout << "图像已保存到 " << save_path << std::endl;
         sleep(1);
         // detect_laser_edge(cv::imread("/home/dw/robot/image/1.jpg"));
@@ -132,9 +145,9 @@ int saveVedio(){
 }
 
 int takePic(){
-    std::string base_path = "/home/dw/robot/image/origin_image/";
+    std::string pic_path = "/home/dw/robot/image/origin_image/";
     std::string filename  = "origin_" + getTimeString() + ".jpg";
-    std::string save_path = base_path + filename;
+    std::string save_path = pic_path + filename;
     cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
@@ -158,7 +171,7 @@ int takePic(){
         std::cerr << "无法获取图像帧。" << std::endl;
     }
     cv::Mat undistorted;
-    cv::undistort(frame, undistorted, MycameraMatrix, MydistCoeffs);
+    cv::undistort(frame, undistorted, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
     cv::waitKey(10);
     cv::imwrite(save_path, undistorted); 
     std::cout << "图像已保存到 " << save_path << std::endl;
@@ -210,7 +223,7 @@ int detect_img_edge(cv::Mat src, cv::Mat &out) {
 int userImgProc0(cv::Mat *theMat, long beginTime, long afterTime){
 
     cv::Mat undistorted, out;
-    cv::undistort(*theMat, undistorted, MycameraMatrix, MydistCoeffs);
+    cv::undistort(*theMat, undistorted, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
     detect_img_edge(undistorted, out);
 
     std::string filename = "image/photo_" + std::to_string(afterTime) + ".jpg";
@@ -495,7 +508,7 @@ std::vector<LaserData> readLaserCSV(const std::string& filename) {
 // 预处理函数(去畸变、绿色通道增强及平滑处理)
 cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut) {
     // 去畸变 (保存 undistortedOut 用于后续绘图)
-    cv::undistort(input, undistortedOut, MycameraMatrix, MydistCoeffs);
+    cv::undistort(input, undistortedOut, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
 
     // 通道增强（绿色提取）
     std::vector<cv::Mat> bgr;
@@ -521,9 +534,12 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
         cv::threshold(diff, mask, threshold_value, 255, cv::THRESH_BINARY);
         cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-        if ((contours.size() <= 2 && !contours.empty()) || threshold_value <= 50) break;
-        threshold_value -= 3;
+        if ((contours.size() <= vConfig.counter_maxsize && !contours.empty()) || threshold_value <= vConfig.threshold_value_min) break;
+        threshold_value -= vConfig.threshold_value_rate;
     }
+
+    std::cout << "检测到轮廓数量: " << contours.size() << std::endl;
+    std::cout << "最终阈值: " << threshold_value << std::endl;
 
     // 只保留面积最大的两个
     std::sort(contours.begin(), contours.end(), [](const auto& a, const auto& b) {
@@ -580,7 +596,7 @@ std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<
 }
 
 // 保存结果与可视化
-void saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData) {
+cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData) {
     // 红色轮廓绘制
     for (const auto& contour : contours) {
         double area = cv::contourArea(contour);
@@ -589,9 +605,9 @@ void saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const
         }
     }
 
-    std::string timeStr = getTimeString();
-    std::ofstream ofs(base_path + timeStr + "_points.csv");
-    ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
+    // std::string timeStr = getTimeString();
+    // std::ofstream ofs(vConfig.base_path + timeStr + "_points.csv");
+    // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
 
     cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
 
@@ -603,7 +619,7 @@ void saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const
             if (dis <= 0) continue;
 
             outData.push_back({lc.laser_type, x, y, dis});
-            ofs << lc.laser_type << "," << x << "," << y << "," << dis << "\n";
+            // ofs << lc.laser_type << "," << x << "," << y << "," << dis << "\n";
             mask_center.at<uchar>(y, x) = 255;
         }
     }
@@ -617,12 +633,13 @@ void saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const
         }
     }
 
-    cv::imwrite(base_path + timeStr + "_detected.jpg", canvas);
-    ofs.close();
+    // cv::imwrite(vConfig.base_path + timeStr + "_detected.jpg", canvas);
+    // ofs.close();
+    return canvas;
 }
 
 // 检测激光中心线主函数
-std::vector<LaserData> detectLaserCenter(cv::Mat image) {
+std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
     cv::Mat undistortedImg;
     std::vector<LaserData> laserPoints;
 
@@ -637,232 +654,24 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image) {
     auto lcs = extractCenterlinePoints(contours, diff);
 
     // 4. 保存与可视化
-    saveAndVisualize(contours, lcs, undistortedImg, diff, laserPoints);
+    cv::Mat canvas = saveAndVisualize(contours, lcs, undistortedImg, diff, laserPoints);
+    
+    *imageOut = canvas;
 
     std::cout << "激光中心线检测完成。" << std::endl;
     return laserPoints;
 }
 
 
-
-
-
-// 检测图像中的激光中心线,保存到CSV文件和LaserData数组中
-std::vector<LaserData> detect_laser_center(cv::Mat image) {
-    // 去畸变
-    cv::Mat img;
-    cv::undistort(image, img, MycameraMatrix, MydistCoeffs);
-
-    // 通道增强（提取绿色激光）
-    std::vector<cv::Mat> bgr;
-    cv::split(img, bgr);
-    cv::Mat diff = bgr[1] - 0.5 * (bgr[0] + bgr[2]);
-    cv::normalize(diff, diff, 0, 255, cv::NORM_MINMAX);
-    diff.convertTo(diff, CV_8U);
-    cv::GaussianBlur(diff, diff, cv::Size(5, 5), 0);
-
-    // 自适应阈值
-    double minVal, maxVal;
-    cv::minMaxLoc(diff, &minVal, &maxVal);
-    int threshold_value = static_cast<int>(std::max(30.0, maxVal * 0.8));
-
-    cv::Mat mask;
-    cv::threshold(diff, mask, threshold_value, 255, cv::THRESH_BINARY);
-
-    // 轮廓检测
-    std::vector<std::vector<cv::Point>> contours;
-
-    // ====== 根据轮廓个数来调整阈值 ======
-    int iter = 0;
-    while (iter++ < 100) {
-        cv::Mat mask;
-        cv::threshold(diff, mask, threshold_value, 255, cv::THRESH_BINARY);
-        cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
-        if ((contours.size() <= 2 && contours.size() > 0) || threshold_value <= 50){
-            break;
-        }
-        threshold_value -= 3;
-    }
-
-    // ====== 只保留最大两个轮廓（去残影） ======
-    int max_idx1 = -1, max_idx2 = -1;
-    double max_area1 = 0.0, max_area2 = 0.0;
-
-    for (int i = 0; i < contours.size(); ++i) {
-        double area = cv::contourArea(contours[i]);
-
-        if (area > max_area1) {
-            // 原第一名降为第二名
-            max_area2 = max_area1;
-            max_idx2  = max_idx1;
-
-            max_area1 = area;
-            max_idx1  = i;
-        }
-        else if (area > max_area2) {
-            max_area2 = area;
-            max_idx2  = i;
-        }
-    }
-
-    std::vector<std::vector<cv::Point>> filtered_contours;
-
-    if (max_idx1 >= 0)
-        filtered_contours.push_back(contours[max_idx1]);
-
-    if (max_idx2 >= 0)
-        filtered_contours.push_back(contours[max_idx2]);
-
-    contours = filtered_contours;
-    // ==========================================
-
-    
-
-    cv::Mat img_with_contours = img.clone();
-    for (const auto& contour : contours) {
-        double area = cv::contourArea(contour);
-        if (area > img.cols * img.rows * 0.0002)
-            cv::drawContours(img_with_contours, std::vector<std::vector<cv::Point>>{contour}, -1, cv::Scalar(0, 0, 255), 1);
-    }
-    
-    printf("counters size: %lu, threshold_value: %d\n", contours.size(), threshold_value);
-
-    
-
-    // 中心线计算
-    std::vector<LaserData> laserPoints;
-    std::vector<std::vector<int>> distance_points(diff.cols);
-    cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
-    // 保存每个轮廓的数据
-    struct LaserContour {
-        std::vector<int> xs;
-        std::vector<int> ys;
-        double y_average;
-        int laser_type; // 1 或 2
-    };
-    std::vector<LaserContour> laser_contours;
-    for (int i = 0; i < contours.size(); ++i) {
-        cv::Mat black_mask = cv::Mat::zeros(diff.size(), CV_8U);
-        cv::drawContours(black_mask, contours, i, cv::Scalar(255), cv::FILLED);
-        cv::Mat result_image = cv::Mat::zeros(diff.size(), diff.type());
-        diff.copyTo(result_image, black_mask);
-
-        cv::Rect box = cv::boundingRect(contours[i]);
-        LaserContour lc;
-
-        // 遍历该轮廓覆盖的每一列 (X)
-        for (int x = box.x; x < box.x + box.width; ++x) {
-            int first_y = -1;
-            int last_y = -1;
-
-            // 在当前列中，从上往下找第一个和最后一个非黑像素 (像素值 > 0)
-            for (int y = box.y; y < box.y + box.height; ++y) {
-                if (result_image.at<uchar>(y, x) > 0) {
-                    if (first_y == -1) first_y = y; // 记录激光上边缘
-                    last_y = y;                    // 记录激光下边缘
-                }
-            }
-            lc.xs.push_back(x);
-            if (first_y != -1 && last_y != -1) {
-                int center_y = (first_y + last_y) / 2;
-                lc.ys.push_back(center_y);
-            }
-        }
-
-        if (lc.ys.empty()) continue;
-
-        double sum = 0;
-        for (int y : lc.ys) sum += y;
-        lc.y_average = sum / lc.ys.size();
-
-        laser_contours.push_back(lc);
-    }
-
-    // ---------- 安全检查 ----------
-    if (laser_contours.empty()) {
-        std::cerr << "未检测到激光轮廓" << std::endl;
-        return {};
-    }
-
-    printf("laser_contours size: %lu\n", laser_contours.size());
-
-    // ---------- 第二遍：按轮廓选择距离函数 ----------
-    if(laser_contours[0].y_average < laser_contours[1].y_average){
-        laser_contours[0].laser_type = 1;
-        laser_contours[1].laser_type = 2;
-    } else{
-        laser_contours[0].laser_type = 2;
-        laser_contours[1].laser_type = 1;
-    }
-
-    //打开csv文件
-    std::string fname  = getTimeString() + "_points" + ".csv";
-    std::string savePath = base_path + fname;
-    std::ofstream ofs(savePath);
-    // 写表头
-    ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
-
-    for (const auto& lc : laser_contours) {
-
-        for (size_t i = 0; i < lc.xs.size(); ++i) {
-            int x = lc.xs[i];
-            int y = lc.ys[i];
-
-            double dis = (lc.laser_type == 1) ? y_pixel_to_distance1(y) : y_pixel_to_distance2(y);
-
-            if (dis <= 0) continue;
-            LaserData row;
-            row.laser_id   = lc.laser_type;
-            row.x_pixel     = x;
-            row.y_pixel     = y;
-            row.distance_cm = dis;
-            laserPoints.push_back(row);
-            ofs << lc.laser_type << "," << x << "," << y << "," << dis << "\n";
-            mask_center.at<uchar>(y, x) = 255;
-        }
-    }
-
-
-    // 修复断线（形态学闭运算）
-    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 1));
-    cv::morphologyEx(mask_center, mask_center, cv::MORPH_CLOSE, kernel);
-
-    // 可视化
-    for (int y = 0; y < mask_center.rows; ++y) {
-        for (int x = 0; x < mask_center.cols; ++x) {
-            if (mask_center.at<uchar>(y, x) > 0)
-                cv::circle(img_with_contours, cv::Point(x, y), 1, cv::Scalar(255, 0, 0), -1);
-        }
-    }
-
-    
-    
-    std::string filename1  = getTimeString() + "_diff" + ".jpg";
-    std::string filename2  = getTimeString() + "_mask" +  ".jpg";
-    std::string filename3  = getTimeString() + "_detected" + ".jpg";
-    std::string save_path1 = base_path + filename1;
-    std::string save_path2 = base_path + filename2;
-    std::string save_path3 = base_path + filename3;
-    // 保存结果
-    cv::imwrite(save_path1, diff);
-    cv::imwrite(save_path2, mask_center);
-    cv::imwrite(save_path3, img_with_contours);
-
-    std::cout << "激光中心线检测完成。" << std::endl;
-    ofs.close();
-    return laserPoints;
-}
 
 // 平滑11个点
 std::vector<LaserData> smooth(const std::vector<LaserData> data) {
     std::vector<LaserData> smoothedData;
-    //打开csv文件
-    std::string fname  = getTimeString() + "_points_smooth" + ".csv";
-    std::string savePath = base_path + fname;
-    std::ofstream ofs(savePath);
-    // 写表头
-    ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
+
+    // std::string fname  = getTimeString() + "_points_smooth" + ".csv";
+    // std::string savePath = vConfig.base_path + fname;
+    // std::ofstream ofs(savePath);
+    // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
     
     int n = data.size();
 
@@ -885,15 +694,15 @@ std::vector<LaserData> smooth(const std::vector<LaserData> data) {
         row.y_pixel = data[i-5].y_pixel;
         row.distance_cm = val;
         smoothedData.push_back(row);
-        ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
+        // ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
 
     }
-    ofs.close();
+    // ofs.close();
     return smoothedData;
 }
 
-// 峰值竞争(峰值索引, 激光数据, 窗口宽度)
-std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::vector<LaserData>& data, int win) {
+// 峰值竞争(峰值索引, 激光数据)
+std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::vector<LaserData>& data) {
     if (peakIndices.empty()) return {};
 
     std::vector<int> filtered;
@@ -905,7 +714,7 @@ std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::
         // 向左检查win范围内的邻居
         for (int j = i - 1; j >= 0; --j) {
             int prev_idx = peakIndices[j];
-            if (std::abs(data[curr_idx].x_pixel - data[prev_idx].x_pixel) > win) break;
+            if (std::abs(data[curr_idx].x_pixel - data[prev_idx].x_pixel) > vConfig.peak_suppress_win) break;
             if (data[prev_idx].distance_cm > data[curr_idx].distance_cm) {
                 keep = false;
                 break;
@@ -915,7 +724,7 @@ std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::
         // 向右检查win范围内的邻居
         for (int j = i + 1; j < peakIndices.size(); ++j) {
             int next_idx = peakIndices[j];
-            if (std::abs(data[next_idx].x_pixel - data[curr_idx].x_pixel) > win) break;
+            if (std::abs(data[next_idx].x_pixel - data[curr_idx].x_pixel) > vConfig.peak_suppress_win) break;
             if (data[next_idx].distance_cm >= data[curr_idx].distance_cm) {
                 keep = false;
                 break;
@@ -929,7 +738,7 @@ std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::
 }
 
 // 趋势坍塌分析函数(激光数据, 峰值索引, 耐心值, 最佳宽度, 最佳深度, 宽度权重比, 深度权重比)
-SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx, int patience_limit, double best_width, double best_depth, double ratio_width, double ratio_depth) {
+SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx) {
     SeamResult res;
     res.id = data[peakIdx].laser_id;
     res.x_peak = data[peakIdx].x_pixel;
@@ -939,10 +748,10 @@ SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx,
     
     // 向左寻找坡脚
     int left = peakIdx;
-    int patience = patience_limit;
+    int patience = vConfig.patience_limit;
     for (int j = peakIdx - 1; j > 0; --j) {
         if (data[j].distance_cm < data[j+1].distance_cm) {
-            patience = patience_limit;
+            patience = vConfig.patience_limit;
         } else {patience--;}
         left = j;
         if (patience <= 0) break;
@@ -950,10 +759,10 @@ SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx,
 
     // 向右寻找坡脚
     int right = peakIdx;
-    patience = patience_limit;
+    patience = vConfig.patience_limit;
     for (int j = peakIdx + 1; j < n; ++j) {
         if (data[j].distance_cm < data[j-1].distance_cm) {
-            patience = patience_limit;
+            patience = vConfig.patience_limit;
         } else {patience--;}
         right = j;
         if (patience <= 0) break;
@@ -968,14 +777,14 @@ SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx,
     res.depth = abs(res.dist - base_dist);
 
     // 凹陷评分
-    double s_width = std::min(res.width / best_width, 1.0);
-    double s_depth = std::min(res.depth / best_depth, 1.0);
-    res.score = s_width * ratio_width + s_depth * ratio_depth;
+    double s_width = std::min(res.width / vConfig.best_width, 1.0);
+    double s_depth = std::min(res.depth / vConfig.best_depth, 1.0);
+    res.score = s_width * vConfig.ratio_width + s_depth * vConfig.ratio_depth;
 
     return res;
 }
 
-// 主识别函数
+// 寻找橘缝函数
 std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData) {
     int n = smoothedData.size();
     if (n < 15) return {};
@@ -991,32 +800,30 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
         }
     }
     // 调用峰值竞争函数
-    std::vector<int> clearPeaks = suppress_peaks(rawPeakIndices, smoothedData, 20);
+    std::vector<int> clearPeaks = suppress_peaks(rawPeakIndices, smoothedData);
     
     // 保存所有凹陷结果
     std::map<int, std::vector<SeamResult>> groupResults;
     for (int p_idx : clearPeaks) {
         // 调用趋势坍塌分析函数
-        SeamResult current = analyzeSeamStructure(smoothedData, p_idx, 10, 60.0, 0.2, 0.4, 0.6);
+        SeamResult current = analyzeSeamStructure(smoothedData, p_idx);
         // 只保留中间区域的橘缝
         if(current.x_peak>120 && current.x_peak<520){
             groupResults[current.id].push_back(current);
-            printf("检测到橘缝: id=%d, x_peak=%d, dist=%.2f cm, left_foot=%d, right_foot=%d, width=%d, depth=%.2f cm, score=%.2f\n",
-                current.id,
-                current.x_peak,
-                current.dist,
-                current.left_foot,
-                current.right_foot,
-                current.width,
-                current.depth,
-                current.score);
+            std::cout << std::fixed << std::setprecision(2);
+            std::cout << "检测到橘缝:id=" << current.id 
+                 << ", x_peak=" << current.x_peak 
+                 << ", dist=" << current.dist << " cm"
+                 << ", left_foot=" << current.left_foot 
+                 << ", right_foot=" << current.right_foot 
+                 << ", width=" << current.width 
+                 << ", depth=" << current.depth << " cm"
+                 << ", score=" << current.score 
+                 << std::endl;
         }
     }
 
-    // 求出最像橘缝的凹陷组合
-    const int X_MATCH_THRESHOLD = 30; 
-
-    
+    // 找到最像橘缝的凹陷组合
     std::vector<MatchedSeamPair> tempMatchedPairs;
     std::vector<MatchedSeamPair> finalMatchedPairs;
 
@@ -1028,8 +835,7 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
         for (const auto& s2 : list2) {
             // 计算 X 轴偏差
             int dx = std::abs(s1.x_peak - s2.x_peak);
-            
-            if (dx <= X_MATCH_THRESHOLD) {
+            if (dx <= vConfig.dx_between_seams_min) {
                 MatchedSeamPair mp;
                 mp.s1 = s1;
                 mp.s2 = s2;
@@ -1046,8 +852,10 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
     });
 
     for(const auto& match : tempMatchedPairs){
-        printf("暂时匹配成功的橘缝对(顺序): ID1 x_peak=%d, ID2 x_peak=%d, total_score=%.2f\n",
-                match.s1.x_peak, match.s2.x_peak, match.total_score);
+        std::cout << std::fixed << std::setprecision(2);
+        std::cout << "暂时匹配成功的橘缝对(顺序): ID1 x_peak=" << match.s1.x_peak
+             << ", ID2 x_peak=" << match.s2.x_peak
+             << ", total_score=" << match.total_score << std::endl;
     }
 
     std::set<int> usedX1; // 记录 list1 中已使用的 x_peak
@@ -1061,41 +869,38 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
             // 标记这两个坐标为已使用
             usedX1.insert(match.s1.x_peak);
             usedX2.insert(match.s2.x_peak);
-            if(match.total_score > 1){
+            if(match.total_score > vConfig.total_score_min){
                 // 加入最终结果
                 finalMatchedPairs.push_back(match);
-                printf("最终匹配成功: ID1[x:%d] - ID2[x:%d], 总分: %.2f\n", 
-                    match.s1.x_peak, match.s2.x_peak, match.total_score);
+                std::cout << std::fixed << std::setprecision(2);
+                std::cout << "最终匹配成功的橘缝对: ID1 x_peak=" << match.s1.x_peak
+                     << ", ID2 x_peak=" << match.s2.x_peak
+                     << ", total_score=" << match.total_score << std::endl;
             }
-            
-            
-            
-            if (finalMatchedPairs.size() >= 10) break; 
         }
     }
-    printf("最终橘缝对数量: %lu\n", finalMatchedPairs.size());
-
+    std::cout << "最终橘缝对数量: " << finalMatchedPairs.size() << std::endl;
     for (const auto& seam : finalMatchedPairs) {
-        printf("最终橘缝对结果: id=%d, x_peak=%d, dist=%.2f cm, left_foot=%d, right_foot=%d, width=%d, depth=%.2f cm, score=%.2f\n",
-                seam.s1.id,
-                seam.s1.x_peak,
-                seam.s1.dist,
-                seam.s1.left_foot,
-                seam.s1.right_foot,
-                seam.s1.width,
-                seam.s1.depth,
-                seam.total_score);
-        printf("               id=%d, x_peak=%d, dist=%.2f cm, left_foot=%d, right_foot=%d, width=%d, depth=%.2f cm, score=%.2f\n",
-                seam.s2.id,
-                seam.s2.x_peak,
-                seam.s2.dist,
-                seam.s2.left_foot,
-                seam.s2.right_foot,
-                seam.s2.width,
-                seam.s2.depth,
-                seam.total_score);
+        std::cout << std::fixed << std::setprecision(2);
+        std::cout << "最终橘缝对结果: id=" << seam.s1.id 
+                << ", x_peak=" << seam.s1.x_peak 
+                << ", dist=" << seam.s1.dist << " cm"
+                << ", left_foot=" << seam.s1.left_foot 
+                << ", right_foot=" << seam.s1.right_foot 
+                << ", width=" << seam.s1.width 
+                << ", depth=" << seam.s1.depth << " cm"
+                << ", score=" << seam.total_score << std::endl;
+
+        std::cout << "                id=" << seam.s2.id 
+                << ", x_peak=" << seam.s2.x_peak 
+                << ", dist=" << seam.s2.dist << " cm"
+                << ", left_foot=" << seam.s2.left_foot 
+                << ", right_foot=" << seam.s2.right_foot 
+                << ", width=" << seam.s2.width 
+                << ", depth=" << seam.s2.depth << " cm"
+                << ", score=" << seam.total_score << std::endl;
     }
-    printf("橘缝识别完成。\n");
+    std::cout << "橘缝识别完成。" << std::endl;
     return finalMatchedPairs;
 }
 
@@ -1123,7 +928,7 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> result
         });
         if (it1 != data.end()) {
             result_y1 = it1->y_pixel;
-            printf("找到 x:%d y: %d\n", results[i].s1.x_peak, result_y1);
+            std::cout << "找到 x: " << results[i].s1.x_peak << " y: " << result_y1 << std::endl;
         }
         // 第二组
         auto it2 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
@@ -1131,7 +936,7 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> result
         });
         if (it2 != data.end()) {
             result_y2 = it2->y_pixel;
-            printf("找到 x: %d y: %d\n", results[i].s2.x_peak, result_y2);
+            std::cout << "找到 x: " << results[i].s2.x_peak << " y: " << result_y2 << std::endl;
         }
         cv::Point p1(results[i].s1.x_peak, result_y1); 
         cv::Point p2(results[i].s2.x_peak, result_y2);
@@ -1144,14 +949,24 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> result
         cv::circle(displayImage, p2, 3, cv::Scalar(0, 0, 255), -1);
     }
 
-    std::string filename  = getTimeString() + "_displayImage" + ".jpg";
-    std::string save_path = base_path + filename;
-    cv::imwrite(save_path, displayImage);
-
     return displayImage;
 
 }
 
+// 检测主函数
+int detectMain(cv::Mat originImage){
+    cv::Mat displayImage;
+    std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
+    std::vector<LaserData> smoothData = smooth(data);
+    std::vector<MatchedSeamPair> results = findSeam(smoothData);
+    cv::Mat finalMat = drawSeam(displayImage, results, data);
+
+    std::string filename  = getTimeString() + "_displayImage" + ".jpg";
+    std::string save_path = vConfig.base_path + filename;
+    cv::imwrite(save_path, finalMat);
+
+    return 0;
+}
 
 
 
