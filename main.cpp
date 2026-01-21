@@ -28,6 +28,8 @@ THREADINFO threadInfo[TOTALTHREADNUM] = {
 int main(int argc, char *argv[]){
     // 初始化线程信息
     init_socket();
+    // 初始化视觉配置信息
+    loadVisualConfig(vConfig, "/home/dw/robot/visualConfig.json");
     
     pthread_t thread[TOTALTHREADNUM];  
     beginExit = false;
@@ -64,7 +66,6 @@ int main(int argc, char *argv[]){
     sleep(1);
     wakeupThreadWait(THR_CAN_RECEIVE);
     // wakeupThreadWait(THR_MOTOR_STATUS);
-    loadVisualConfig(vConfig, "/home/dw/robot/visualConfig.json");
     sleep(1);
     if(argc>1) {
         if(strcmp(argv[1], "stop")==0)              { int motor_id = atoi(argv[2]); stop_motor(motor_id); }
@@ -155,56 +156,61 @@ int main(int argc, char *argv[]){
 
         // ----------------------------------------------------------
 
-        else if(strcmp(argv[1], "picandlaser")==0){
+        else if(strcmp(argv[1], "photolaserthread")==0){
             setLaserStatus(true); 
             wakeupThreadWait(THR_LASER_CONTROL);
             wakeupThreadWait(THR_PHOTO_CONTROL);
         }
 
-        else if(strcmp(argv[1], "laser")==0){
-            setLaserStatus(true); 
+        else if(strcmp(argv[1], "laserthread")==0){
+            setLaserStatus(true);
             wakeupThreadWait(THR_LASER_CONTROL);
             takePic();
         }
 
-        else if(strcmp(argv[1], "takeVideo")==0){
+        else if(strcmp(argv[1], "photothread")==0){
             wakeupThreadWait(THR_PHOTO_CONTROL);
         }
+
 
         else if(strcmp(argv[1], "findseam")==0){
             std::string addr = argv[2];
             detectMain(cv::imread(addr));
         }
 
-        else if(strcmp(argv[1], "batchfindseam")==0){
-            std::string folder = "/home/dw/robot/image/video/";
+        else if(strcmp(argv[1], "findseambatch")==0){
             std::vector<cv::String> filenames;
-            cv::glob(folder + "origin_20260113_*.jpg", filenames); // 自动按名称排序读取
+            cv::glob(vConfig.origin_img_path + "origin_*.jpg", filenames); // 自动按名称排序读取
             for (const auto& file : filenames) {
                 cv::Mat frame = cv::imread(file);
                 if (frame.empty()) continue;
-
                 detectMain(frame);
-
                 sleep(1);
             }
         }
 
-        else if(strcmp(argv[1], "playvideo")==0){
-            std::string folder = "/home/dw/robot/image/proc_laser5/";
+        else if(strcmp(argv[1], "showpic")==0){
             std::vector<cv::String> filenames;
-            // cv::glob(folder + "*_displayImage.jpg", filenames);
-            cv::glob(folder + "20260119*.jpg", filenames);
-            cv::namedWindow("Laser Video Player", cv::WINDOW_AUTOSIZE);
+            // cv::glob(vConfig.base_path + "*_displayImage.jpg", filenames);
+            cv::glob(vConfig.base_path + "20260119*.jpg", filenames);
+            // cv::namedWindow("Laser Video Player", cv::WINDOW_AUTOSIZE);
             for (const auto& file : filenames) {
                 cv::Mat frame = cv::imread(file);
                 if (frame.empty()) continue;
-
                 cv::imshow("Laser Video Player", frame);
-
                 char c = (char)cv::waitKey(1000);
             }
             cv::destroyAllWindows();
+        }
+
+        else if(strcmp(argv[1], "test")==0){
+            int motor_id = atoi(argv[2]);
+            int angle = atoi(argv[3]);
+            setLaserStatus(true); 
+            wakeupThreadWait(THR_LASER_CONTROL);
+            wakeupThreadWait(THR_PHOTO_CONTROL);
+            // emm_motor_move(motor_id, angle);
+            screw_motor_move(motor_id, angle);
         }
 
         sleep(600);

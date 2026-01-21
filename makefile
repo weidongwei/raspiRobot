@@ -1,26 +1,20 @@
-#motor: main.cpp gripmachine.cpp thread.cpp ImgProc.cpp
-#	g++ -o motor main.cpp gripmachine.cpp thread.cpp ImgProc.cpp `pkg-config --cflags --libs opencv4`
-#	g++ -o motor main.cpp gripmachine.cpp -I/usr/include/opencv4 -L/usr/local/lib -lopencv_core -lopencv_imgcodecs -lopencv_highgui -lopencv_videoio -lopencv_imgproc
-
-
-#g++ -o motorTest gripmachine.cpp motorTest.cpp
-
+# 定义编译器
 CXX = g++
-CXXFLAGS = -O2 -Wall `pkg-config --cflags opencv4`
-LDFLAGS = `pkg-config --libs opencv4` -lwiringPi -lcjson
+# 定义编译选项
+CXXFLAGS = -O3 `pkg-config --cflags opencv4`
+# 定义链接库
+LDFLAGS = -lwiringPi `pkg-config --libs opencv4`
 
-SRCS = main.cpp communicate.cpp thread.cpp ImgProc.cpp motor.cpp
-OBJS = $(SRCS:.cpp=.o)
+# 定义目标文件名
 TARGET = motor
+# 定义所有的源文件
+SRCS = main.cpp thread.cpp communicate.cpp motor.cpp ImgProc.cpp
 
-all: $(TARGET)
+# 编译规则
+$(TARGET): $(SRCS)
+	$(CXX) -o $(TARGET) $(SRCS) $(CXXFLAGS) $(LDFLAGS)
 
-$(TARGET): $(OBJS)
-	$(CXX) -o $@ $^ $(LDFLAGS)
-
-%.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
+# 清理编译结果
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(TARGET)
 

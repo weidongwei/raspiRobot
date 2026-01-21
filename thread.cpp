@@ -126,7 +126,7 @@ void *laserControlThreadFunc(void* arg){
 
     const int pin = 12;
     const int period_us = 2000;     // 500Hz
-    const float duty = 0.25;
+    const double duty = vConfig.laser_duty;  // 激光占空比
 
     wiringPiSetupGpio();
     pinMode(pin, OUTPUT);
@@ -174,7 +174,12 @@ void *photoControlThreadFunc(void* arg){
         }
         threadInfo[id].runningState = THR_RUN;
         while ( !beginExit ) {
-            takeVedio();
+            if(vConfig.photo_thread_mode == 1)
+                takeVedio();
+            else if(vConfig.photo_thread_mode == 2)
+                saveVedio();
+            else if(vConfig.photo_thread_mode == 3)
+                takePic();
         }
         hungupTheThread(id);
     }

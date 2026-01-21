@@ -6,8 +6,6 @@
 
 // 视觉检测参数
 struct VisualConfig {
-    // 数据保存路径
-    std::string base_path = "/home/dw/robot/image/proc_laser6/";
     // 相机矩阵和畸变参数
     cv::Mat MycameraMatrix = (cv::Mat_<double>(3, 3) <<
     622.8518195651313, 0, 324.9937701989255,
@@ -18,6 +16,17 @@ struct VisualConfig {
         -0.001577442260184354, -0.001153209194483007,
         -3.015609162190799);
     double reprojError = 0.138174;
+    
+    // 原始数据路径
+    std::string origin_img_path;
+    // 数据保存路径
+    std::string base_path;
+    // 激光参数
+    double laser_duty;              // 激光占空比
+    // 摄像头参数
+    int exposure_time;              // 曝光时间(ms)
+    // photo线程模式
+    int photo_thread_mode;          // 1: 实时检测图像 2: 保存多张原始图像 3: 保存单张原始图像
     // 自适应阈值参数
     int counter_maxsize;            // 轮廓最大值
     int threshold_value_min;        // 最小阈值

@@ -61,6 +61,7 @@ int emm_motor_move(int addr, float angle){
     int rpm = mMotor[addr - 1].get_max_rpm();
     float  target_pos = cur_pos + angle;
     printf("当前位置 = %.2f, 目标位置 = %.2f, up_limit = %.2f, low_limit = %.2f\n", cur_pos, target_pos, up_limit, low_limit);
+    std::cout << "当前位置 = " << cur_pos << ", 目标位置 = " << target_pos << ", up_limit = " << up_limit << ", low_limit = " << low_limit << std::endl;
     if(target_pos > up_limit || target_pos < low_limit){
         printf("%d 号电机 目标位置超出限位范围！\n", addr);
         return -1;

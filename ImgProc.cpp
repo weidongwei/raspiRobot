@@ -24,7 +24,11 @@ bool loadVisualConfig(VisualConfig& cfg, const std::string& filename) {
     if (!file.is_open()) return false;
     json j;
     file >> j;
+    cfg.origin_img_path = j["origin_img_path"];
     cfg.base_path = j["base_path"];
+    cfg.laser_duty = j["laser_duty"];
+    cfg.exposure_time = j["exposure_time"];
+    cfg.photo_thread_mode = j["photo_thread_mode"];
     cfg.counter_maxsize = j["counter_maxsize"];
     cfg.threshold_value_min = j["threshold_value_min"];
     cfg.threshold_value_rate = j["threshold_value_rate"];
@@ -36,6 +40,7 @@ bool loadVisualConfig(VisualConfig& cfg, const std::string& filename) {
     cfg.best_depth = j["best_depth"];
     cfg.dx_between_seams_min = j["dx_between_seams_min"];
     cfg.total_score_min = j["total_score_min"];
+    std::cout << "视觉配置文件加载完成：" << filename << std::endl;
     return true;
 }
 
@@ -55,7 +60,7 @@ std::string getTimeString(){
     oss << std::put_time(&tm_time, "%Y%m%d_%H%M%S");
     return oss.str();
 }
-// 采集图像
+// 实时检测图像
 int takeVedio(){
     cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
@@ -66,10 +71,11 @@ int takeVedio(){
     }
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
-    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);  // 有的驱动 1=手动，3=自动，需测试
-    cap.set(cv::CAP_PROP_EXPOSURE, 200);     // 曝光时间整数us
-    cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
-    cap.set(cv::CAP_PROP_BRIGHTNESS, 50);  // 设置亮度为 50(-64 ~ 64)
+    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);                     // 有的驱动 1=手动，3=自动，需测试// 2. 关闭背光补偿 (OpenCV 对应宏是 CAP_PROP_BACKLIGHT)
+    cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
+    cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);      // 曝光时间整数ms(最小值50ms)
+    cap.set(cv::CAP_PROP_SHARPNESS, 100);                       // 设置锐度为 100(0 ~ 100)
+    cap.set(cv::CAP_PROP_BRIGHTNESS, 0);                        // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat frame;
     cv::waitKey(1000);
@@ -89,6 +95,7 @@ int takeVedio(){
         std::vector<LaserData> smoothData = smooth(data);
         std::vector<MatchedSeamPair> results = findSeam(smoothData);
         cv::Mat finalMat = drawSeam(displayImage, results, data);
+        std::cout << "#################################################################" << std::endl;
 
         cv::imshow("Camera Video", finalMat);
         cv::waitKey(100);
@@ -97,8 +104,7 @@ int takeVedio(){
     cv::destroyAllWindows();
     return 0;
 }
-
-// 保存图像集
+// 保存多张原始图像
 int saveVedio(){
     cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
@@ -110,7 +116,7 @@ int saveVedio(){
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
     cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);  // 有的驱动 1=手动，3=自动，需测试
-    cap.set(cv::CAP_PROP_EXPOSURE, 300);     // 曝光时间整数us
+    cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);     // 曝光时间整数us
     cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
     cap.set(cv::CAP_PROP_BRIGHTNESS, 50);  // 设置亮度为 50(-64 ~ 64)
 
@@ -128,9 +134,8 @@ int saveVedio(){
         cv::Mat undistorted;
         cv::undistort(frame, undistorted, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
 
-        std::string video_path = "/home/dw/robot/image/video/";
         std::string filename  = "origin_" + getTimeString() + ".jpg";
-        std::string save_path = video_path + filename;
+        std::string save_path = vConfig.origin_img_path + filename;
         // cv::imshow("Camera Video", undistorted);
         cv::waitKey(10);
         cv::imwrite(save_path, undistorted); 
@@ -143,11 +148,10 @@ int saveVedio(){
     cv::destroyAllWindows();
     return 0;
 }
-
+// 保存单张原始图像
 int takePic(){
-    std::string pic_path = "/home/dw/robot/image/origin_image/";
     std::string filename  = "origin_" + getTimeString() + ".jpg";
-    std::string save_path = pic_path + filename;
+    std::string save_path = vConfig.origin_img_path + filename;
     cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
@@ -158,7 +162,7 @@ int takePic(){
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
     cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);  // 有的驱动 1=手动，3=自动，需测试
-    cap.set(cv::CAP_PROP_EXPOSURE, 300);     // 曝光时间整数us
+    cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);     // 曝光时间整数us
     cap.set(cv::CAP_PROP_SHARPNESS, 50);  // 设置锐度为 100(0 ~ 100)
     cap.set(cv::CAP_PROP_BRIGHTNESS, 30);  // 设置亮度为 50(-64 ~ 64)
 
@@ -176,8 +180,6 @@ int takePic(){
     cv::imwrite(save_path, undistorted); 
     std::cout << "图像已保存到 " << save_path << std::endl;
     sleep(1);
-    // detect_laser_edge(cv::imread("/home/dw/robot/image/1.jpg"));
-    // detect_laser_center(cv::imread("/home/dw/robot/image/1.jpg"));
 
     cap.release();
     cv::destroyAllWindows();
@@ -526,6 +528,7 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
     double minVal, maxVal;
     cv::minMaxLoc(diff, &minVal, &maxVal);
     int threshold_value = static_cast<int>(std::max(30.0, maxVal * 0.8));
+    std::cout << "起始阈值: " << threshold_value << std::endl;
 
     std::vector<std::vector<cv::Point>> contours;
     // 自适应阈值循环
@@ -556,6 +559,11 @@ std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<
 
     for (int i = 0; i < contours.size(); ++i) {
         cv::Mat mask = cv::Mat::zeros(diff.size(), CV_8U);
+        
+        // std::string filename  = "test.jpg";
+        // std::string save_path = vConfig.base_path + filename;
+        // cv::imwrite(save_path, diff);
+        
         cv::drawContours(mask, contours, i, cv::Scalar(255), cv::FILLED);
         
         cv::Rect box = cv::boundingRect(contours[i]);
@@ -711,21 +719,23 @@ std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::
     for (int i = 0; i < peakIndices.size(); ++i) {
         int curr_idx = peakIndices[i];
         bool keep = true;
-        // 向左检查win范围内的邻居
-        for (int j = i - 1; j >= 0; --j) {
-            int prev_idx = peakIndices[j];
-            if (std::abs(data[curr_idx].x_pixel - data[prev_idx].x_pixel) > vConfig.peak_suppress_win) break;
-            if (data[prev_idx].distance_cm > data[curr_idx].distance_cm) {
-                keep = false;
-                break;
-            }
-        }
-        if (!keep) continue;
+
         // 向右检查win范围内的邻居
         for (int j = i + 1; j < peakIndices.size(); ++j) {
             int next_idx = peakIndices[j];
             if (std::abs(data[next_idx].x_pixel - data[curr_idx].x_pixel) > vConfig.peak_suppress_win) break;
             if (data[next_idx].distance_cm >= data[curr_idx].distance_cm) {
+                keep = false;
+                break;
+            }
+        }
+        if (!keep) continue;
+        
+        // 向左检查win范围内的邻居
+        for (int j = i - 1; j >= 0; --j) {
+            int prev_idx = peakIndices[j];
+            if (std::abs(data[curr_idx].x_pixel - data[prev_idx].x_pixel) > vConfig.peak_suppress_win) break;
+            if (data[prev_idx].distance_cm > data[curr_idx].distance_cm) {
                 keep = false;
                 break;
             }
@@ -745,29 +755,27 @@ SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx)
     res.dist = data[peakIdx].distance_cm;
     
     int n = data.size();
-    
-    // 向左寻找坡脚
-    int left = peakIdx;
-    int patience = vConfig.patience_limit;
-    for (int j = peakIdx - 1; j > 0; --j) {
-        if (data[j].distance_cm < data[j+1].distance_cm) {
-            patience = vConfig.patience_limit;
-        } else {patience--;}
-        left = j;
-        if (patience <= 0) break;
-    }
 
     // 向右寻找坡脚
     int right = peakIdx;
-    patience = vConfig.patience_limit;
+    int patience = vConfig.patience_limit;
     for (int j = peakIdx + 1; j < n; ++j) {
-        if (data[j].distance_cm < data[j-1].distance_cm) {
+        if (data[j].distance_cm <= data[j-1].distance_cm) {
             patience = vConfig.patience_limit;
         } else {patience--;}
         right = j;
         if (patience <= 0) break;
     }
-
+    // 向左寻找坡脚
+    int left = peakIdx;
+    patience = vConfig.patience_limit;
+    for (int j = peakIdx - 1; j > 0; --j) {
+        if (data[j].distance_cm <= data[j+1].distance_cm) {
+            patience = vConfig.patience_limit;
+        } else {patience--;}
+        left = j;
+        if (patience <= 0) break;
+    }
     res.left_foot = data[left].x_pixel;
     res.right_foot = data[right].x_pixel;
 
@@ -928,7 +936,6 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> result
         });
         if (it1 != data.end()) {
             result_y1 = it1->y_pixel;
-            std::cout << "找到 x: " << results[i].s1.x_peak << " y: " << result_y1 << std::endl;
         }
         // 第二组
         auto it2 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
@@ -936,7 +943,6 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> result
         });
         if (it2 != data.end()) {
             result_y2 = it2->y_pixel;
-            std::cout << "找到 x: " << results[i].s2.x_peak << " y: " << result_y2 << std::endl;
         }
         cv::Point p1(results[i].s1.x_peak, result_y1); 
         cv::Point p2(results[i].s2.x_peak, result_y2);

@@ -1,14 +1,22 @@
 {
-    "base_path": "/home/dw/robot/image/proc_laser6/",
-    "counter_maxsize": 2,
-    "threshold_value_min": 100,
-    "threshold_value_rate": 3,
-    "peak_suppress_win": 20,
-    "patience_limit": 10,
-    "ratio_width": 0.4,
-    "ratio_depth": 0.6,
-    "best_width": 60.0,
-    "best_depth": 0.2,
-    "dx_between_seams_min": 30,
-    "total_score_min": 1.0
+    "origin_img_path": "/home/dw/robot/image/origin_image1/",
+    "base_path": "/home/dw/robot/image/proc_laser7/",
+
+    "laser_duty": 0.25,                  "ldu_comment": "激光占空比",
+    "exposure_time": 300,                "eti_comment": "相机曝光时间(ms)",
+
+    "photo_thread_mode": 1,             "ptm_comment": "1: 实时检测图像 2: 保存多张原始图像 3: 保存单张原始图像",
+
+    "counter_maxsize": 2,               "cma_comment": "轮廓最大值",
+    "threshold_value_min": 100,         "tvm_comment": "最小阈值",
+    "threshold_value_rate": 3,          "tvr_comment": "每次迭代减少的阈值",
+
+    "peak_suppress_win": 20,            "psw_comment": "峰值抑制窗口",
+    "patience_limit": 10,               "pli_comment": "耐心值(影响宽度)",
+    "ratio_width": 0.4,                 "rwi_comment": "宽度权重比",
+    "ratio_depth": 0.6,                 "rde_comment": "深度权重比",
+    "best_width": 60.0,                 "bwi_comment": "最佳宽度",
+    "best_depth": 0.2,                  "bde_comment": "最佳深度",
+    "dx_between_seams_min": 30,         "dbs_comment": "相邻橘缝最小距离",
+    "total_score_min": 1,               "tsm_comment": "综合评分最低分数"
 }
