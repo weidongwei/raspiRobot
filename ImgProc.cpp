@@ -507,6 +507,8 @@ std::vector<LaserData> readLaserCSV(const std::string& filename) {
     return dataList;
 }
 
+
+
 // 预处理函数(去畸变、绿色通道增强及平滑处理)
 cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut) {
     // 去畸变 (保存 undistortedOut 用于后续绘图)
@@ -676,10 +678,10 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
 std::vector<LaserData> smooth(const std::vector<LaserData> data) {
     std::vector<LaserData> smoothedData;
 
-    // std::string fname  = getTimeString() + "_points_smooth" + ".csv";
-    // std::string savePath = vConfig.base_path + fname;
-    // std::ofstream ofs(savePath);
-    // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
+    std::string fname  = getTimeString() + "_points_smooth" + ".csv";
+    std::string savePath = vConfig.base_path + fname;
+    std::ofstream ofs(savePath);
+    ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
     
     int n = data.size();
 
@@ -702,7 +704,7 @@ std::vector<LaserData> smooth(const std::vector<LaserData> data) {
         row.y_pixel = data[i-5].y_pixel;
         row.distance_cm = val;
         smoothedData.push_back(row);
-        // ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
+        ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
 
     }
     // ofs.close();

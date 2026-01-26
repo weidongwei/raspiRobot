@@ -1,6 +1,6 @@
 {
     "origin_img_path": "/home/dw/robot/image/origin_image1/",
-    "base_path": "/home/dw/robot/image/proc_laser7/",
+    "base_path": "/home/dw/robot/image/proc_laser8/",
 
     "laser_duty": 0.25,                  "ldu_comment": "激光占空比",
     "exposure_time": 300,                "eti_comment": "相机曝光时间(ms)",
@@ -12,7 +12,7 @@
     "threshold_value_rate": 3,          "tvr_comment": "每次迭代减少的阈值",
 
     "peak_suppress_win": 20,            "psw_comment": "峰值抑制窗口",
-    "patience_limit": 10,               "pli_comment": "耐心值(影响宽度)",
+    "patience_limit": 15,               "pli_comment": "耐心值(影响宽度)",
     "ratio_width": 0.4,                 "rwi_comment": "宽度权重比",
     "ratio_depth": 0.6,                 "rde_comment": "深度权重比",
     "best_width": 60.0,                 "bwi_comment": "最佳宽度",
