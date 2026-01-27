@@ -31,6 +31,10 @@ struct VisualConfig {
     int counter_maxsize;            // 轮廓最大值
     int threshold_value_min;        // 最小阈值
     int threshold_value_rate;       // 每次迭代减少的阈值
+    int best_laser_length;          // 理想激光长度
+    int best_laser_width;           // 理想激光宽度 
+    double ratio_laser_length;      // 激光长度权重比
+    double ratio_laser_width;       // 激光宽度权重比
     // 峰值竞争参数
     int peak_suppress_win;          // 峰值抑制窗口
     //趋势坍塌分析函数参数
@@ -94,6 +98,7 @@ double y_pixel_to_distance2(double y_pixel);
 std::vector<LaserData> readLaserCSV(const std::string& filename);
 
 cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut);
+double calculateScore(const std::vector<std::vector<cv::Point>>& contours);
 std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff);
 std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat& diff);
 cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData);

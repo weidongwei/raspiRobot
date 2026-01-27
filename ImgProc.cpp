@@ -32,6 +32,10 @@ bool loadVisualConfig(VisualConfig& cfg, const std::string& filename) {
     cfg.counter_maxsize = j["counter_maxsize"];
     cfg.threshold_value_min = j["threshold_value_min"];
     cfg.threshold_value_rate = j["threshold_value_rate"];
+    cfg.best_laser_length = j["best_laser_length"];
+    cfg.best_laser_width = j["best_laser_width"];
+    cfg.ratio_laser_length = j["ratio_laser_length"];
+    cfg.ratio_laser_width = j["ratio_laser_width"];
     cfg.peak_suppress_win = j["peak_suppress_win"];
     cfg.patience_limit = j["patience_limit"];
     cfg.ratio_width = j["ratio_width"];
@@ -116,9 +120,10 @@ int saveVedio(){
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
     cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);  // 有的驱动 1=手动，3=自动，需测试
+    cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
     cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);     // 曝光时间整数us
     cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
-    cap.set(cv::CAP_PROP_BRIGHTNESS, 50);  // 设置亮度为 50(-64 ~ 64)
+    cap.set(cv::CAP_PROP_BRIGHTNESS, 0);  // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat frame;
     cv::waitKey(1000);
@@ -140,7 +145,9 @@ int saveVedio(){
         cv::waitKey(10);
         cv::imwrite(save_path, undistorted); 
         std::cout << "图像已保存到 " << save_path << std::endl;
-        sleep(1);
+        cv::imshow("Camera Video", undistorted);
+        cv::waitKey(1000);
+        // sleep(1);
         // detect_laser_edge(cv::imread("/home/dw/robot/image/1.jpg"));
         // detect_laser_center(cv::imread("/home/dw/robot/image/1.jpg"));
     }
@@ -162,9 +169,10 @@ int takePic(){
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
     cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);  // 有的驱动 1=手动，3=自动，需测试
+    cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
     cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);     // 曝光时间整数us
-    cap.set(cv::CAP_PROP_SHARPNESS, 50);  // 设置锐度为 100(0 ~ 100)
-    cap.set(cv::CAP_PROP_BRIGHTNESS, 30);  // 设置亮度为 50(-64 ~ 64)
+    cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
+    cap.set(cv::CAP_PROP_BRIGHTNESS, 0);  // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat frame;
     cv::waitKey(1000);
@@ -525,34 +533,100 @@ cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut) {
     return diff;
 }
 
-// 轮廓检测与过滤(自适应阈值逻辑和保留最大两个轮廓)
+// 计算当前轮廓组合的得分
+double calculateScore(const std::vector<std::vector<cv::Point>>& contours) {
+    if (contours.empty()) return 0.0;
+
+    std::vector<std::pair<double, double>> metrics;
+    for (const auto& cnt : contours) {
+        double area = cv::contourArea(cnt);
+        if (area < 10.0) continue; 
+        double length = cv::arcLength(cnt, false) * 0.5;
+        metrics.push_back({length, area});
+    }
+
+    if (metrics.empty()) return 0.0;
+    
+    // 按长度排序，取前两个
+    std::sort(metrics.begin(), metrics.end(), [](const auto& a, const auto& b){
+        return a.first > b.first;
+    });
+
+    double total_len = 0;
+    double total_area = 0;
+    int count = 2;
+    for (int i = 0; i < count; ++i) {
+        total_len += metrics[i].first;
+        total_area += metrics[i].second;
+    }
+
+    // 长度评分
+    double s_len = 0.0;
+    double ideal_l = vConfig.best_laser_length;
+    if (total_len <= ideal_l) {
+        s_len = total_len / ideal_l;
+    } else {
+        s_len = std::max(0.0, 1.0 - (total_len - ideal_l) / (ideal_l/2));
+    }
+
+    // 细度评分
+    double s_thin = 0.0;
+    double ideal_w = vConfig.best_laser_width;
+    double ideal_a = ideal_l * ideal_w;
+
+    if (total_area <= ideal_a) {
+        s_thin = total_area / ideal_a;
+    } else {
+        s_thin = std::max(0.0, 1.0 - (total_area - ideal_a) / (ideal_a + 1e-5));
+    }
+    
+
+    // 综合加权
+    double final_score = (s_len * vConfig.ratio_laser_length) + (s_thin * vConfig.ratio_laser_width);
+
+    return final_score;
+}
+
+// 轮廓检测与过滤
 std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
     double minVal, maxVal;
     cv::minMaxLoc(diff, &minVal, &maxVal);
-    int threshold_value = static_cast<int>(std::max(30.0, maxVal * 0.8));
-    std::cout << "起始阈值: " << threshold_value << std::endl;
+    
+    int start_thresh = static_cast<int>(maxVal * 0.65); 
+    int end_thresh = vConfig.threshold_value_min;
+    int step = vConfig.threshold_value_rate;
 
-    std::vector<std::vector<cv::Point>> contours;
-    // 自适应阈值循环
-    for (int iter = 0; iter < 100; ++iter) {
+    double max_total_score = -1.0;
+    int best_thresh = start_thresh;
+    std::vector<std::vector<cv::Point>> best_contours;
+
+    for (int thresh = start_thresh; thresh >= end_thresh; thresh -= step) {
         cv::Mat mask;
-        cv::threshold(diff, mask, threshold_value, 255, cv::THRESH_BINARY);
-        cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+        cv::threshold(diff, mask, thresh, 255, cv::THRESH_BINARY);
+        
+        std::vector<std::vector<cv::Point>> current_contours;
+        cv::findContours(mask, current_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-        if ((contours.size() <= vConfig.counter_maxsize && !contours.empty()) || threshold_value <= vConfig.threshold_value_min) break;
-        threshold_value -= vConfig.threshold_value_rate;
+        // 调用新评分系统
+        double score = calculateScore(current_contours);
+        
+        // 记录最优解
+        if (score > max_total_score) {
+            max_total_score = score;
+            best_thresh = thresh;
+            best_contours = current_contours;
+        }
     }
 
-    std::cout << "检测到轮廓数量: " << contours.size() << std::endl;
-    std::cout << "最终阈值: " << threshold_value << std::endl;
+    std::cout << "最佳阈值: " << best_thresh << " 综合得分: " << max_total_score << std::endl;
 
-    // 只保留面积最大的两个
-    std::sort(contours.begin(), contours.end(), [](const auto& a, const auto& b) {
+    // 最后的输出过滤：依然按面积保留前两个
+    std::sort(best_contours.begin(), best_contours.end(), [](const auto& a, const auto& b) {
         return cv::contourArea(a) > cv::contourArea(b);
     });
     
-    if (contours.size() > 2) contours.resize(2);
-    return contours;
+    if (best_contours.size() > 2) best_contours.resize(2);
+    return best_contours;
 }
 
 // 中心线几何提取
@@ -581,7 +655,9 @@ std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<
                 }
             }
             if (first_y != -1) {
-                int center_y = (first_y + last_y) / 2;
+                // int center_y = (first_y + last_y) / 2;
+
+                int center_y = first_y;
                 lc.xs.push_back(x);
                 lc.ys.push_back(center_y);
                 y_sum += center_y;
@@ -615,9 +691,9 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, co
         }
     }
 
-    // std::string timeStr = getTimeString();
-    // std::ofstream ofs(vConfig.base_path + timeStr + "_points.csv");
-    // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
+    std::string timeStr = getTimeString();
+    std::ofstream ofs(vConfig.base_path + timeStr + "_points.csv");
+    ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
 
     cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
 
@@ -629,7 +705,7 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, co
             if (dis <= 0) continue;
 
             outData.push_back({lc.laser_type, x, y, dis});
-            // ofs << lc.laser_type << "," << x << "," << y << "," << dis << "\n";
+            ofs << lc.laser_type << "," << x << "," << y << "," << dis << "\n";
             mask_center.at<uchar>(y, x) = 255;
         }
     }

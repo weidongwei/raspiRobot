@@ -26,3 +26,39 @@ git commit -m ""
 //使用 SSH 将代码推送到 GitHub
 git push -u origin master
 git push
+
+
+
+
+
+
+
+// // 轮廓检测与过滤(自适应阈值逻辑和保留最大两个轮廓)
+// std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
+//     double minVal, maxVal;
+//     cv::minMaxLoc(diff, &minVal, &maxVal);
+//     int threshold_value = static_cast<int>(std::max(30.0, maxVal * 0.8));
+//     std::cout << "起始阈值: " << threshold_value << std::endl;
+
+//     std::vector<std::vector<cv::Point>> contours;
+//     // 自适应阈值循环
+//     for (int iter = 0; iter < 100; ++iter) {
+//         cv::Mat mask;
+//         cv::threshold(diff, mask, threshold_value, 255, cv::THRESH_BINARY);
+//         cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+//         if ((contours.size() <= vConfig.counter_maxsize && !contours.empty()) || threshold_value <= vConfig.threshold_value_min) break;
+//         threshold_value -= vConfig.threshold_value_rate;
+//     }
+
+//     std::cout << "检测到轮廓数量: " << contours.size() << std::endl;
+//     std::cout << "最终阈值: " << threshold_value << std::endl;
+
+//     // 只保留面积最大的两个
+//     std::sort(contours.begin(), contours.end(), [](const auto& a, const auto& b) {
+//         return cv::contourArea(a) > cv::contourArea(b);
+//     });
+    
+//     if (contours.size() > 2) contours.resize(2);
+//     return contours;
+// }

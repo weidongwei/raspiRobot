@@ -209,9 +209,10 @@ int main(int argc, char *argv[]){
             setLaserStatus(true); 
             wakeupThreadWait(THR_LASER_CONTROL);
             wakeupThreadWait(THR_PHOTO_CONTROL);
-            // emm_motor_move(motor_id, angle);
-            screw_motor_move(motor_id, angle);
+            emm_motor_move(motor_id, angle);
+            // screw_motor_move(motor_id, angle);
         }
+
 
         sleep(600);
         return 0;
