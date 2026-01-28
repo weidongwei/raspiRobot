@@ -29,7 +29,6 @@ bool loadVisualConfig(VisualConfig& cfg, const std::string& filename) {
     cfg.laser_duty = j["laser_duty"];
     cfg.exposure_time = j["exposure_time"];
     cfg.photo_thread_mode = j["photo_thread_mode"];
-    cfg.counter_maxsize = j["counter_maxsize"];
     cfg.threshold_value_min = j["threshold_value_min"];
     cfg.threshold_value_rate = j["threshold_value_rate"];
     cfg.best_laser_length = j["best_laser_length"];
@@ -536,8 +535,12 @@ cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut) {
 // 计算当前轮廓组合的得分
 double calculateScore(const std::vector<std::vector<cv::Point>>& contours) {
     if (contours.empty()) return 0.0;
+    struct LaserMetric {
+        double length;
+        double area;
+    };
 
-    std::vector<std::pair<double, double>> metrics;
+    std::vector<LaserMetric> metrics;
     for (const auto& cnt : contours) {
         double area = cv::contourArea(cnt);
         if (area < 10.0) continue; 
@@ -548,16 +551,16 @@ double calculateScore(const std::vector<std::vector<cv::Point>>& contours) {
     if (metrics.empty()) return 0.0;
     
     // 按长度排序，取前两个
-    std::sort(metrics.begin(), metrics.end(), [](const auto& a, const auto& b){
-        return a.first > b.first;
+    std::sort(metrics.begin(), metrics.end(), [](const LaserMetric& a, const LaserMetric& b){
+        return a.length > b.length;
     });
 
     double total_len = 0;
     double total_area = 0;
-    int count = 2;
+    int count = std::min((int)metrics.size(), 2); // 确保不会超过实际数量
     for (int i = 0; i < count; ++i) {
-        total_len += metrics[i].first;
-        total_area += metrics[i].second;
+        total_len += metrics[i].length;
+        total_area += metrics[i].area;
     }
 
     // 长度评分
@@ -609,6 +612,7 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
 
         // 调用新评分系统
         double score = calculateScore(current_contours);
+
         
         // 记录最优解
         if (score > max_total_score) {
@@ -621,17 +625,22 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
     std::cout << "最佳阈值: " << best_thresh << " 综合得分: " << max_total_score << std::endl;
 
     // 最后的输出过滤：依然按面积保留前两个
-    std::sort(best_contours.begin(), best_contours.end(), [](const auto& a, const auto& b) {
+    std::sort(best_contours.begin(), best_contours.end(), [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
         return cv::contourArea(a) > cv::contourArea(b);
     });
     
     if (best_contours.size() > 2) best_contours.resize(2);
     return best_contours;
+
 }
 
 // 中心线几何提取
 std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat& diff) {
     std::vector<LaserContour> laser_contours;
+
+    // 权重设置
+    const double weight_top = 1;
+    const double weight_center = 1.0 - weight_top;
 
     for (int i = 0; i < contours.size(); ++i) {
         cv::Mat mask = cv::Mat::zeros(diff.size(), CV_8U);
@@ -655,12 +664,15 @@ std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<
                 }
             }
             if (first_y != -1) {
-                // int center_y = (first_y + last_y) / 2;
+                int center_y = (first_y + last_y) / 2;
+                // int center_y = first_y;
+                
+                int top_y = first_y;
+                int fused_y = std::round(center_y * weight_center + top_y * weight_top);
 
-                int center_y = first_y;
                 lc.xs.push_back(x);
-                lc.ys.push_back(center_y);
-                y_sum += center_y;
+                lc.ys.push_back(fused_y);
+                y_sum += fused_y;
             }
         }
         if (!lc.ys.empty()) {
@@ -691,9 +703,9 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, co
         }
     }
 
-    std::string timeStr = getTimeString();
-    std::ofstream ofs(vConfig.base_path + timeStr + "_points.csv");
-    ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
+    // std::string timeStr = getTimeString();
+    // std::ofstream ofs(vConfig.base_path + timeStr + "_points.csv");
+    // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
 
     cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
 
@@ -705,7 +717,7 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, co
             if (dis <= 0) continue;
 
             outData.push_back({lc.laser_type, x, y, dis});
-            ofs << lc.laser_type << "," << x << "," << y << "," << dis << "\n";
+            // ofs << lc.laser_type << "," << x << "," << y << "," << dis << "\n";
             mask_center.at<uchar>(y, x) = 255;
         }
     }
@@ -783,7 +795,6 @@ std::vector<LaserData> smooth(const std::vector<LaserData> data) {
         ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
 
     }
-    // ofs.close();
     return smoothedData;
 }
 

@@ -1,13 +1,12 @@
 {
-    "origin_img_path": "/home/dw/robot/image/origin_image1/",
-    "base_path": "/home/dw/robot/image/proc_laser10/",
+    "origin_img_path": "/home/dw/robot/image/origin_image2/",
+    "base_path": "/home/dw/robot/image/proc_laser11/",
 
     "laser_duty": 0.5,                  "ldu_comment": "激光占空比",
     "exposure_time": 100,                "eti_comment": "相机曝光时间(ms)",
 
     "photo_thread_mode": 1,             "ptm_comment": "1: 实时检测图像 2: 保存多张原始图像 3: 保存单张原始图像",
 
-    "counter_maxsize": 2,               "cma_comment": "轮廓最大值",
     "threshold_value_min": 10,         "tvm_comment": "最小阈值",
     "threshold_value_rate": 5,          "tvr_comment": "每次迭代减少的阈值",
     "best_laser_length": 1400,           "bll_comment": "理想激光长度",
@@ -22,5 +21,5 @@
     "best_width": 60.0,                 "bwi_comment": "最佳宽度",
     "best_depth": 0.2,                  "bde_comment": "最佳深度",
     "dx_between_seams_min": 30,         "dbs_comment": "相邻橘缝最小距离",
-    "total_score_min": 0,               "tsm_comment": "综合评分最低分数"
+    "total_score_min": 1,               "tsm_comment": "综合评分最低分数"
 }
