@@ -871,11 +871,25 @@ SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx)
     // 获取凹陷宽度和深度
     res.width = std::abs(data[right].x_pixel - data[left].x_pixel);
     double base_dist = (data[left].distance_cm + data[right].distance_cm) / 2.0;
-    res.depth = abs(res.dist - base_dist);
+    res.depth = res.dist - base_dist;
 
-    // 凹陷评分
-    double s_width = std::min(res.width / vConfig.best_width, 1.0);
-    double s_depth = std::min(res.depth / vConfig.best_depth, 1.0);
+
+    // 宽度评分
+    double s_width = 0.0;
+    double w_val = static_cast<double>(res.width);
+    if (w_val <= vConfig.best_width) {
+        s_width = w_val / (vConfig.best_width + 1e-5); 
+    } else {
+        s_width = vConfig.best_width / w_val;
+    }
+
+    // 深度评分
+    double s_depth = 0.0;
+    if (res.depth <= vConfig.best_depth) {
+        s_depth = res.depth / (vConfig.best_depth + 1e-5);
+    } else {
+        s_depth = vConfig.best_depth / res.depth;
+    }
     res.score = s_width * vConfig.ratio_width + s_depth * vConfig.ratio_depth;
 
     return res;

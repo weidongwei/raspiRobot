@@ -16,10 +16,10 @@
 
     "peak_suppress_win": 20,            "psw_comment": "峰值抑制窗口",
     "patience_limit": 15,               "pli_comment": "耐心值(影响宽度)",
-    "ratio_width": 0.4,                 "rwi_comment": "宽度权重比",
-    "ratio_depth": 0.6,                 "rde_comment": "深度权重比",
+    "ratio_width": 0,                 "rwi_comment": "宽度权重比",
+    "ratio_depth": 1,                 "rde_comment": "深度权重比",
     "best_width": 60.0,                 "bwi_comment": "最佳宽度",
     "best_depth": 0.2,                  "bde_comment": "最佳深度",
-    "dx_between_seams_min": 30,         "dbs_comment": "相邻橘缝最小距离",
-    "total_score_min": 1,               "tsm_comment": "综合评分最低分数"
+    "dx_between_seams_min": 50,         "dbs_comment": "相邻橘缝最小距离",
+    "total_score_min": 0.5,               "tsm_comment": "综合评分最低分数"
 }
