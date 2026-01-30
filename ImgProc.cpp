@@ -764,37 +764,31 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
 
 // 平滑11个点
 std::vector<LaserData> smooth(const std::vector<LaserData> data) {
-    std::vector<LaserData> smoothedData;
-
     std::string fname  = getTimeString() + "_points_smooth" + ".csv";
     std::string savePath = vConfig.base_path + fname;
     std::ofstream ofs(savePath);
     ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
-    
+
+    std::vector<LaserData> smoothedData;
     int n = data.size();
 
     // 中间部分使用滑动窗口卷积
-    for (int i = 5; i < n - 5; ++i) {
-        double val = (data[i-5].distance_cm  +
-                     data[i-4].distance_cm  +
-                     data[i-3].distance_cm  +
-                     data[i-2].distance_cm  +
-                     data[i-1].distance_cm  +
-                     data[i].distance_cm  +
-                     data[i+1].distance_cm  +
-                     data[i+2].distance_cm  +
-                     data[i+3].distance_cm  +
-                     data[i+4].distance_cm  +
-                     data[i+5].distance_cm )/11;
-        LaserData row;
-        row.laser_id = data[i-5].laser_id;
-        row.x_pixel = data[i-5].x_pixel;
-        row.y_pixel = data[i-5].y_pixel;
+    for (int i = 0; i < n; ++i) {
+        double sum = 0;
+        int count = 0;
+        for (int j = i - 5; j <= i + 5; ++j) {
+            if (j >= 0 && j < n) {
+                sum += data[j].distance_cm;
+                count++;
+            }
+        }
+        double val = sum / count;
+        LaserData row = data[i];
         row.distance_cm = val;
         smoothedData.push_back(row);
         ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
-
     }
+    std::cout << "data size: " << data.size() << ", smoothed size: " << smoothedData.size() << std::endl;
     return smoothedData;
 }
 
@@ -836,9 +830,10 @@ std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::
     return filtered;
 }
 
-// 趋势坍塌分析函数(激光数据, 峰值索引, 耐心值, 最佳宽度, 最佳深度, 宽度权重比, 深度权重比)
+// 趋势坍塌分析函数(激光数据, 峰值索引)
 SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx) {
     SeamResult res;
+    if (data.empty() || peakIdx < 0 || peakIdx >= data.size()) return res;
     res.id = data[peakIdx].laser_id;
     res.x_peak = data[peakIdx].x_pixel;
     res.dist = data[peakIdx].distance_cm;
@@ -847,32 +842,42 @@ SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx)
 
     // 向右寻找坡脚
     int right = peakIdx;
+    double min_dist_right = data[peakIdx].distance_cm;
     int patience = vConfig.patience_limit;
     for (int j = peakIdx + 1; j < n; ++j) {
-        if (data[j].distance_cm <= data[j-1].distance_cm) {
+        double curr_dist = data[j].distance_cm;
+        if (curr_dist < min_dist_right) {
+            min_dist_right = curr_dist;
+            right = j;
             patience = vConfig.patience_limit;
-        } else {patience--;}
-        right = j;
+        } else {
+            patience--; 
+        }
         if (patience <= 0) break;
     }
+    res.right_foot = data[right].x_pixel;
     // 向左寻找坡脚
     int left = peakIdx;
+    double min_dist_left = data[peakIdx].distance_cm;
     patience = vConfig.patience_limit;
     for (int j = peakIdx - 1; j > 0; --j) {
-        if (data[j].distance_cm <= data[j+1].distance_cm) {
+        double curr_dist = data[j].distance_cm;
+        if (curr_dist < min_dist_left) {
+            min_dist_left = curr_dist;
+            left = j;
             patience = vConfig.patience_limit;
-        } else {patience--;}
-        left = j;
+        } else {
+            patience--;
+        }
         if (patience <= 0) break;
     }
     res.left_foot = data[left].x_pixel;
-    res.right_foot = data[right].x_pixel;
 
     // 获取凹陷宽度和深度
-    res.width = std::abs(data[right].x_pixel - data[left].x_pixel);
-    double base_dist = (data[left].distance_cm + data[right].distance_cm) / 2.0;
+    res.width = std::abs(res.right_foot - res.left_foot);
+    double base_dist = (min_dist_left + min_dist_right) / 2.0;
     res.depth = res.dist - base_dist;
-
+    if (res.depth < 0) res.depth = 0;
 
     // 宽度评分
     double s_width = 0.0;
@@ -899,7 +904,6 @@ SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx)
 std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData) {
     int n = smoothedData.size();
     if (n < 15) return {};
-
     // 初选极大值
     std::vector<int> rawPeakIndices;
     for (int i = 2; i < n - 2; ++i) {
