@@ -25,6 +25,7 @@ struct VisualConfig {
     double laser_duty;              // 激光占空比
     // 摄像头参数
     int exposure_time;              // 曝光时间(ms)
+    int brightness;                 // 亮度
     // photo线程模式
     int photo_thread_mode;          // 1: 实时检测图像 2: 保存多张原始图像 3: 保存单张原始图像
     // 自适应阈值参数

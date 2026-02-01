@@ -1,11 +1,12 @@
 {
-    "origin_img_path": "/home/dw/robot/image/origin_image2/",
-    "base_path": "/home/dw/robot/image/proc_laser12/",
+    "origin_img_path": "/home/dw/robot/image/origin_image4/",
+    "base_path": "/home/dw/robot/image/origin_image4/proc/",
 
-    "laser_duty": 0.5,                  "ldu_comment": "激光占空比",
-    "exposure_time": 100,                "eti_comment": "相机曝光时间(ms)",
+    "laser_duty": 0.15,                  "ldu_comment": "激光占空比",
+    "exposure_time": 1200,                "eti_comment": "相机曝光时间(ms)",
+    "brightness": 0,                  "bri_comment": "相机亮度(-64 ~ 64)",
 
-    "photo_thread_mode": 1,             "ptm_comment": "1: 实时检测图像 2: 保存多张原始图像 3: 保存单张原始图像",
+    "photo_thread_mode": 2,             "ptm_comment": "1: 实时检测图像 2: 保存多张原始图像 3: 保存单张原始图像",
 
     "threshold_value_min": 10,         "tvm_comment": "最小阈值",
     "threshold_value_rate": 5,          "tvr_comment": "每次迭代减少的阈值",

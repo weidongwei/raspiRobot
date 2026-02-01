@@ -28,6 +28,7 @@ bool loadVisualConfig(VisualConfig& cfg, const std::string& filename) {
     cfg.base_path = j["base_path"];
     cfg.laser_duty = j["laser_duty"];
     cfg.exposure_time = j["exposure_time"];
+    cfg.brightness = j["brightness"];
     cfg.photo_thread_mode = j["photo_thread_mode"];
     cfg.threshold_value_min = j["threshold_value_min"];
     cfg.threshold_value_rate = j["threshold_value_rate"];
@@ -78,7 +79,7 @@ int takeVedio(){
     cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
     cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);      // 曝光时间整数ms(最小值50ms)
     cap.set(cv::CAP_PROP_SHARPNESS, 100);                       // 设置锐度为 100(0 ~ 100)
-    cap.set(cv::CAP_PROP_BRIGHTNESS, 0);                        // 设置亮度为 50(-64 ~ 64)
+    cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);       // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat frame;
     cv::waitKey(1000);
@@ -122,7 +123,7 @@ int saveVedio(){
     cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
     cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);     // 曝光时间整数us
     cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
-    cap.set(cv::CAP_PROP_BRIGHTNESS, 0);  // 设置亮度为 50(-64 ~ 64)
+    cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);  // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat frame;
     cv::waitKey(1000);
@@ -171,7 +172,7 @@ int takePic(){
     cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
     cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);     // 曝光时间整数us
     cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
-    cap.set(cv::CAP_PROP_BRIGHTNESS, 0);  // 设置亮度为 50(-64 ~ 64)
+    cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);  // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat frame;
     cv::waitKey(1000);
@@ -764,10 +765,10 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
 
 // 平滑11个点
 std::vector<LaserData> smooth(const std::vector<LaserData> data) {
-    std::string fname  = getTimeString() + "_points_smooth" + ".csv";
-    std::string savePath = vConfig.base_path + fname;
-    std::ofstream ofs(savePath);
-    ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
+    // std::string fname  = getTimeString() + "_points_smooth" + ".csv";
+    // std::string savePath = vConfig.base_path + fname;
+    // std::ofstream ofs(savePath);
+    // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
 
     std::vector<LaserData> smoothedData;
     int n = data.size();
@@ -786,7 +787,7 @@ std::vector<LaserData> smooth(const std::vector<LaserData> data) {
         LaserData row = data[i];
         row.distance_cm = val;
         smoothedData.push_back(row);
-        ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
+        // ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
     }
     std::cout << "data size: " << data.size() << ", smoothed size: " << smoothedData.size() << std::endl;
     return smoothedData;
