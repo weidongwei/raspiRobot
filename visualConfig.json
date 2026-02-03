@@ -1,17 +1,17 @@
 {
-    "origin_img_path": "/home/dw/robot/image/origin_image4/",
-    "base_path": "/home/dw/robot/image/origin_image4/proc/",
+    "origin_img_path": "/home/dw/robot/image/origin_image7/",
+    "base_path": "/home/dw/robot/image/origin_image6/proc/",
 
-    "laser_duty": 0.15,                  "ldu_comment": "激光占空比",
-    "exposure_time": 1200,                "eti_comment": "相机曝光时间(ms)",
-    "brightness": 0,                  "bri_comment": "相机亮度(-64 ~ 64)",
+    "laser_duty": 0.15,                 "ldu_comment": "激光占空比",
+    "exposure_time": 1200,              "eti_comment": "相机曝光时间(ms)",
+    "brightness": 0,                    "bri_comment": "相机亮度(-64 ~ 64)",
 
     "photo_thread_mode": 2,             "ptm_comment": "1: 实时检测图像 2: 保存多张原始图像 3: 保存单张原始图像",
 
-    "threshold_value_min": 10,         "tvm_comment": "最小阈值",
+    "threshold_value_min": 10,          "tvm_comment": "最小阈值",
     "threshold_value_rate": 5,          "tvr_comment": "每次迭代减少的阈值",
-    "best_laser_length": 1400,           "bll_comment": "理想激光长度",
-    "best_laser_width": 10,              "blw_comment": "理想激光宽度",
+    "best_laser_length": 1400,          "bll_comment": "理想激光长度",
+    "best_laser_width": 10,             "blw_comment": "理想激光宽度",
     "ratio_laser_length": 0.7,          "rll_comment": "激光长度权重比",
     "ratio_laser_width": 0.3,           "rlw_comment": "激光宽度权重比",
 
@@ -22,5 +22,5 @@
     "best_width": 80.0,                 "bwi_comment": "最佳宽度",
     "best_depth": 0.2,                  "bde_comment": "最佳深度",
     "dx_between_seams_min": 50,         "dbs_comment": "相邻橘缝最小距离",
-    "total_score_min": 0.8,               "tsm_comment": "综合评分最低分数"
+    "total_score_min": 0.8,             "tsm_comment": "综合评分最低分数"
 }

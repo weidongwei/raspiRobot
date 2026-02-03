@@ -1078,6 +1078,8 @@ int detectMain(cv::Mat originImage){
     std::string filename  = getTimeString() + "_displayImage" + ".jpg";
     std::string save_path = vConfig.base_path + filename;
     cv::imwrite(save_path, finalMat);
+    // cv::imshow("Final Detection", finalMat);
+    // cv::waitKey(1);
 
     return 0;
 }
