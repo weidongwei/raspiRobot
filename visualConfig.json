@@ -1,5 +1,5 @@
 {
-    "origin_img_path": "/home/dw/robot/image/origin_image7/",
+    "origin_img_path": "/home/dw/robot/image/origin_image9/",
     "base_path": "/home/dw/robot/image/origin_image6/proc/",
 
     "laser_duty": 0.15,                 "ldu_comment": "激光占空比",
