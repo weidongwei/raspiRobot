@@ -827,6 +827,7 @@ std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::
         if (keep) {
             filtered.push_back(curr_idx);
         }
+    
     }
     return filtered;
 }
