@@ -21,6 +21,8 @@ struct VisualConfig {
     std::string origin_img_path;
     // 数据保存路径
     std::string base_path;
+    // diff数据保存路径
+    std::string diff_path;
     // 激光参数
     double laser_duty;              // 激光占空比
     // 摄像头参数

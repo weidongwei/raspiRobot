@@ -26,6 +26,7 @@ bool loadVisualConfig(VisualConfig& cfg, const std::string& filename) {
     file >> j;
     cfg.origin_img_path = j["origin_img_path"];
     cfg.base_path = j["base_path"];
+    cfg.diff_path = j["diff_path"];
     cfg.laser_duty = j["laser_duty"];
     cfg.exposure_time = j["exposure_time"];
     cfg.brightness = j["brightness"];
@@ -611,6 +612,10 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
         std::vector<std::vector<cv::Point>> current_contours;
         cv::findContours(mask, current_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
+        std::string filename  = getTimeString() + "_diff" + ".jpg";
+        std::string save_path = vConfig.diff_path + filename;
+        cv::imwrite(save_path, diff);
+
         // 调用新评分系统
         double score = calculateScore(current_contours);
 
@@ -760,6 +765,8 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
     std::cout << "激光中心线检测完成。" << std::endl;
     return laserPoints;
 }
+
+
 
 
 
@@ -1078,7 +1085,7 @@ int detectMain(cv::Mat originImage){
 
     std::string filename  = getTimeString() + "_displayImage" + ".jpg";
     std::string save_path = vConfig.base_path + filename;
-    cv::imwrite(save_path, finalMat);
+    // cv::imwrite(save_path, finalMat);
     // cv::imshow("Final Detection", finalMat);
     // cv::waitKey(1);
 
