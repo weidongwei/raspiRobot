@@ -612,9 +612,11 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
         std::vector<std::vector<cv::Point>> current_contours;
         cv::findContours(mask, current_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
+        //
         std::string filename  = getTimeString() + "_diff" + ".jpg";
         std::string save_path = vConfig.diff_path + filename;
         cv::imwrite(save_path, diff);
+        //
 
         // 调用新评分系统
         double score = calculateScore(current_contours);
