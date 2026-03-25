@@ -219,7 +219,7 @@ int main(int argc, char *argv[]){
     }
 
 
-    // 主线程等待退出信号
+    // 主线程等待退出信号。
     for(int i=0; i<TOTALTHREADNUM; i++)  {
         pthread_join(thread[i],NULL);
         printf("Thread %s(%d) Jion End.\n", threadInfo[i].name, threadInfo[i].ID);
