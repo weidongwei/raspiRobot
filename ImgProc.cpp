@@ -25,8 +25,9 @@ bool loadVisualConfig(VisualConfig& cfg, const std::string& filename) {
     json j;
     file >> j;
     cfg.origin_img_path = j["origin_img_path"];
-    cfg.base_path = j["base_path"];
+    cfg.proc_path = j["proc_path"];
     cfg.diff_path = j["diff_path"];
+    cfg.csv_path = j["csv_path"];
     cfg.laser_duty = j["laser_duty"];
     cfg.exposure_time = j["exposure_time"];
     cfg.brightness = j["brightness"];
@@ -613,9 +614,9 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
         cv::findContours(mask, current_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
         //
-        std::string filename  = getTimeString() + "_diff" + ".jpg";
-        std::string save_path = vConfig.diff_path + filename;
-        cv::imwrite(save_path, diff);
+        // std::string filename  = getTimeString() + "_diff" + ".jpg";
+        // std::string save_path = vConfig.diff_path + filename;
+        // cv::imwrite(save_path, diff);
         //
 
         // 调用新评分系统
@@ -654,7 +655,7 @@ std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<
         cv::Mat mask = cv::Mat::zeros(diff.size(), CV_8U);
         
         // std::string filename  = "test.jpg";
-        // std::string save_path = vConfig.base_path + filename;
+        // std::string save_path = vConfig.proc_path + filename;
         // cv::imwrite(save_path, diff);
         
         cv::drawContours(mask, contours, i, cv::Scalar(255), cv::FILLED);
@@ -712,7 +713,7 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, co
     }
 
     // std::string timeStr = getTimeString();
-    // std::ofstream ofs(vConfig.base_path + timeStr + "_points.csv");
+    // std::ofstream ofs(vConfig.csv_path + timeStr + "_points.csv");
     // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
 
     cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
@@ -739,7 +740,7 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, co
         }
     }
 
-    // cv::imwrite(vConfig.base_path + timeStr + "_detected.jpg", canvas);
+    // cv::imwrite(vConfig.proc_path + timeStr + "_detected.jpg", canvas);
     // ofs.close();
     return canvas;
 }
@@ -774,10 +775,10 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
 
 // 平滑11个点
 std::vector<LaserData> smooth(const std::vector<LaserData> data) {
-    // std::string fname  = getTimeString() + "_points_smooth" + ".csv";
-    // std::string savePath = vConfig.base_path + fname;
-    // std::ofstream ofs(savePath);
-    // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
+    std::string fname  = getTimeString() + "_points_smooth" + ".csv";
+    std::string savePath = vConfig.csv_path + fname;
+    std::ofstream ofs(savePath);
+    ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
 
     std::vector<LaserData> smoothedData;
     int n = data.size();
@@ -796,7 +797,7 @@ std::vector<LaserData> smooth(const std::vector<LaserData> data) {
         LaserData row = data[i];
         row.distance_cm = val;
         smoothedData.push_back(row);
-        // ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
+        ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
     }
     std::cout << "data size: " << data.size() << ", smoothed size: " << smoothedData.size() << std::endl;
     return smoothedData;
@@ -1086,7 +1087,7 @@ int detectMain(cv::Mat originImage){
     cv::Mat finalMat = drawSeam(displayImage, results, data);
 
     std::string filename  = getTimeString() + "_displayImage" + ".jpg";
-    std::string save_path = vConfig.base_path + filename;
+    std::string save_path = vConfig.proc_path + filename;
     // cv::imwrite(save_path, finalMat);
     // cv::imshow("Final Detection", finalMat);
     // cv::waitKey(1);

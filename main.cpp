@@ -191,8 +191,8 @@ int main(int argc, char *argv[]){
 
         else if(strcmp(argv[1], "showpic")==0){
             std::vector<cv::String> filenames;
-            // cv::glob(vConfig.base_path + "*_displayImage.jpg", filenames);
-            cv::glob(vConfig.base_path + "20260301*.jpg", filenames);
+            // cv::glob(vConfig.proc_path + "*_displayImage.jpg", filenames);
+            cv::glob(vConfig.proc_path + "20260301*.jpg", filenames);
             // cv::namedWindow("Laser Video Player", cv::WINDOW_AUTOSIZE);
             for (const auto& file : filenames) {
                 cv::Mat frame = cv::imread(file);

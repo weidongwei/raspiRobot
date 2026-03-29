@@ -1,7 +1,8 @@
 {
     "origin_img_path": "/home/dw/robot/image/origin_image9/",
-    "base_path": "/home/dw/robot/image/origin_image9/proc/",
+    "proc_path": "/home/dw/robot/image/origin_image9/proc/",
     "diff_path": "/home/dw/robot/image/origin_image9/diff/",
+    "csv_path": "/home/dw/robot/image/origin_image9/csv/",
 
     "laser_duty": 0.15,                 "ldu_comment": "激光占空比",
     "exposure_time": 1200,              "eti_comment": "相机曝光时间(ms)",
