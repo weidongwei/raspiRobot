@@ -124,7 +124,7 @@ void *laserControlThreadFunc(void* arg){
     THREADINFO *thisThreadInfo = (THREADINFO *)arg; 
     int id = thisThreadInfo->ID;
 
-    const int pin = 12;
+    const int pin = 13;
     const int period_us = 2000;     // 500Hz
     const double duty = vConfig.laser_duty;  // 激光占空比
 

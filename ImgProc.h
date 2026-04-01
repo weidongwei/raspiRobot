@@ -3,15 +3,15 @@
 #include <stdio.h>
 #include <opencv2/opencv.hpp>
 #include <vector>
-//////////////////////////////////////////////////////////
-#include <opencv2/dnn.hpp>
+// //////////////////////////////////////////////////////////
+// #include <opencv2/dnn.hpp>
 
-// 全局推理会话（只初始化一次）
-extern cv::dnn::Net g_seamNet;
-extern int g_seamSeqLen;
+// // 全局推理会话（只初始化一次）
+// extern cv::dnn::Net g_seamNet;
+// extern int g_seamSeqLen;
 
-bool initSeamModel(const std::string& onnxPath, int seqLen = 480);
-//////////////////////////////////////////////////////////
+// bool initSeamModel(const std::string& onnxPath, int seqLen = 480);
+// //////////////////////////////////////////////////////////
 
 // 视觉检测参数
 struct VisualConfig {
@@ -127,6 +127,6 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> result
 
 int detectMain(cv::Mat originImage);
 
-std::vector<MatchedSeamPair> findSeamAI(const std::vector<LaserData>& smoothedData);
+// std::vector<MatchedSeamPair> findSeamAI(const std::vector<LaserData>& smoothedData);
 
 #endif // IMGPROC_H

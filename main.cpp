@@ -30,10 +30,10 @@ int main(int argc, char *argv[]){
     init_socket();
     // 初始化视觉配置信息
     loadVisualConfig(vConfig, "/home/dw/robot/visualConfig.json");
-    ////////////////////////////////////////////////////////
-    // 程序启动时初始化一次
-    initSeamModel("/home/dw/robot/seam_model.onnx", 480);
-    ////////////////////////////////////////////////////////
+    // ////////////////////////////////////////////////////////
+    // // 程序启动时初始化一次
+    // initSeamModel("/home/dw/robot/seam_model.onnx", 480);
+    // ////////////////////////////////////////////////////////
     
     pthread_t thread[TOTALTHREADNUM];  
     beginExit = false;
