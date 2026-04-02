@@ -17,129 +17,7 @@ using json = nlohmann::json;
 
 VisualConfig vConfig;
 
-// ////////////////////////////////////////////////////////
-// cv::dnn::Net g_seamNet;
-// int g_seamSeqLen = 480;
 
-// // 初始化模型（程序启动时调用一次）
-// bool initSeamModel(const std::string& onnxPath, int seqLen) {
-//     g_seamSeqLen = seqLen;
-//     g_seamNet = cv::dnn::readNetFromONNX(onnxPath);
-//     if (g_seamNet.empty()) {
-//         std::cerr << "加载 ONNX 模型失败: " << onnxPath << std::endl;
-//         return false;
-//     }
-//     g_seamNet.setPreferableBackend(cv::dnn::DNN_BACKEND_DEFAULT);
-//     g_seamNet.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
-//     std::cout << "橘缝 AI 模型加载成功" << std::endl;
-//     return true;
-// }
-
-// // 用 AI 替换 findSeam，接口与原版完全一致
-
-// std::vector<MatchedSeamPair> findSeamAI(const std::vector<LaserData>& smoothedData) {
-//     int n = smoothedData.size();
-//     if (n < 15) return {};
-
-//     // ── 1. 按 laser_id 分组（和原版一样分成两条激光线）──
-//     std::map<int, std::vector<LaserData>> groups;
-//     for (const auto& d : smoothedData) groups[d.laser_id].push_back(d);
-
-//     std::map<int, std::vector<SeamResult>> groupResults;
-
-//     for (auto& [lid, lineData] : groups) {
-//         int m = lineData.size();
-//         if (m < 10) continue;
-
-//         // ── 2. 把距离序列插值到固定长度，归一化 ──
-//         std::vector<float> signal(g_seamSeqLen);
-//         double dmin = lineData[0].distance_cm, dmax = lineData[0].distance_cm;
-//         for (auto& d : lineData) { dmin = std::min(dmin, d.distance_cm); dmax = std::max(dmax, d.distance_cm); }
-//         double range = (dmax > dmin) ? (dmax - dmin) : 1.0;
-
-//         for (int i = 0; i < g_seamSeqLen; i++) {
-//             double src_idx = (double)i / (g_seamSeqLen - 1) * (m - 1);
-//             int lo = (int)src_idx, hi = std::min(lo + 1, m - 1);
-//             double t = src_idx - lo;
-//             double v = lineData[lo].distance_cm * (1-t) + lineData[hi].distance_cm * t;
-//             signal[i] = (float)((v - dmin) / range);
-//         }
-
-//         // ── 3. 模型推理 ──
-//         cv::Mat inputBlob(1, g_seamSeqLen, CV_32F, signal.data());
-//         inputBlob = inputBlob.reshape(1, {1, g_seamSeqLen});  // (1, seq_len)
-//         g_seamNet.setInput(inputBlob);
-//         cv::Mat heatmap = g_seamNet.forward();  // (1, seq_len)
-
-//         float* hmap = (float*)heatmap.data;
-
-//         // ── 4. 在 heatmap 上找峰值（极大值抑制）──
-//         std::vector<std::pair<float,int>> peaks;
-//         int win = 20;  // 最小峰值间距（归一化坐标）
-//         for (int i = win; i < g_seamSeqLen - win; i++) {
-//             if (hmap[i] < 0.35f) continue;  // 置信度阈值
-//             bool local_max = true;
-//             for (int j = i-4; j <= i+4; j++) {
-//                 if (j != i && hmap[j] >= hmap[i]) { local_max = false; break; }
-//             }
-//             if (!local_max) continue;
-//             // 非极大值抑制：与已有峰值距离太近则跳过
-//             bool far_enough = true;
-//             for (auto& [s, pi] : peaks) {
-//                 if (std::abs(pi - i) < win) { far_enough = false; break; }
-//             }
-//             if (far_enough) peaks.push_back({hmap[i], i});
-//         }
-
-//         // ── 5. 把归一化坐标映射回原始 x_pixel ──
-//         for (auto& [score, norm_idx] : peaks) {
-//             // norm_idx 是在 [0, g_seamSeqLen) 里的位置
-//             double src_idx = (double)norm_idx / (g_seamSeqLen - 1) * (m - 1);
-//             int peak_data_idx = std::min((int)std::round(src_idx), m - 1);
-
-//             // 复用原有的 analyzeSeamStructure，传入真实数据索引
-//             SeamResult res = analyzeSeamStructure(lineData, peak_data_idx);
-
-//             // 只保留中间区域（和原版一致）
-//             if (res.x_peak > 120 && res.x_peak < 520) {
-//                 res.score = score;  // 用 AI 置信度覆盖原始评分
-//                 groupResults[lid].push_back(res);
-//                 std::cout << "AI检测到橘缝: laser_id=" << lid
-//                           << " x_peak=" << res.x_peak
-//                           << " confidence=" << score << std::endl;
-//             }
-//         }
-//     }
-
-//     // ── 6. 两条激光线匹配（和原版完全相同）──
-//     std::vector<MatchedSeamPair> tempPairs, finalPairs;
-//     for (const auto& s1 : groupResults[1]) {
-//         for (const auto& s2 : groupResults[2]) {
-//             int dx = std::abs(s1.x_peak - s2.x_peak);
-//             if (dx <= vConfig.dx_between_seams_min) {
-//                 MatchedSeamPair mp;
-//                 mp.s1 = s1; mp.s2 = s2;
-//                 mp.total_score = s1.score + s2.score;
-//                 tempPairs.push_back(mp);
-//             }
-//         }
-//     }
-//     std::sort(tempPairs.begin(), tempPairs.end(),
-//               [](const MatchedSeamPair& a, const MatchedSeamPair& b) {
-//                   return a.total_score > b.total_score; });
-
-//     std::set<int> usedX1, usedX2;
-//     for (const auto& mp : tempPairs) {
-//         if (!usedX1.count(mp.s1.x_peak) && !usedX2.count(mp.s2.x_peak)) {
-//             usedX1.insert(mp.s1.x_peak);
-//             usedX2.insert(mp.s2.x_peak);
-//             if (mp.total_score > 0.5f)  // AI 版本阈值（两条线置信度之和>0.5）
-//                 finalPairs.push_back(mp);
-//         }
-//     }
-//     return finalPairs;
-// }
-// ////////////////////////////////////////////////////////
 
 // 加载json配置文件
 bool loadVisualConfig(VisualConfig& cfg, const std::string& filename) {
@@ -189,6 +67,7 @@ std::string getTimeString(){
     oss << std::put_time(&tm_time, "%Y%m%d_%H%M%S");
     return oss.str();
 }
+
 // 实时检测图像
 int takeVedio(){
     cv::VideoCapture cap(0, cv::CAP_V4L2);
@@ -1202,12 +1081,50 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> result
 }
 
 // 检测主函数
+// int detectMain(cv::Mat originImage){
+//     cv::Mat displayImage;
+//     std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
+//     std::vector<LaserData> smoothData = smooth(data);
+//     std::vector<MatchedSeamPair> results = findSeam(smoothData);
+//     cv::Mat finalMat = drawSeam(displayImage, results, data);
+
+//     std::string filename  = getTimeString() + "_displayImage" + ".jpg";
+//     std::string save_path = vConfig.proc_path + filename;
+//     cv::imwrite(save_path, finalMat);
+//     // cv::imshow("Final Detection", finalMat);
+//     cv::waitKey(1);
+
+//     return 0;
+// }
+
+//检测主函数（添加目标检测）
+SeamTracker g_tracker1;   // Laser 1
+SeamTracker g_tracker2;   // Laser 2
 int detectMain(cv::Mat originImage){
     cv::Mat displayImage;
     std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
     std::vector<LaserData> smoothData = smooth(data);
-    std::vector<MatchedSeamPair> results = findSeam(smoothData);
-    cv::Mat finalMat = drawSeam(displayImage, results, data);
+    std::vector<MatchedSeamPair> raw = findSeam(smoothData);
+    // ── 把检测结果喂给跟踪器 ──────────────────────────────
+    std::vector<int> det1, det2;
+    for (auto& r : raw) {
+        det1.push_back(r.s1.x_peak);
+        det2.push_back(r.s2.x_peak);
+    }
+    std::vector<int> stable1 = g_tracker1.update(det1);
+    std::vector<int> stable2 = g_tracker2.update(det2);
+
+    // ── 用稳定结果重建 MatchedSeamPair 用于画线 ──────────
+    std::vector<MatchedSeamPair> stableResults;
+    int n = std::min(stable1.size(), stable2.size());
+    for (int i = 0; i < n; i++) {
+        MatchedSeamPair mp;
+        mp.s1.x_peak = stable1[i];
+        mp.s2.x_peak = stable2[i];
+        mp.total_score = 1.0;
+        stableResults.push_back(mp);
+    }
+    cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
 
     std::string filename  = getTimeString() + "_displayImage" + ".jpg";
     std::string save_path = vConfig.proc_path + filename;
@@ -1218,5 +1135,59 @@ int detectMain(cv::Mat originImage){
     return 0;
 }
 
+
+// 匈牙利最近邻匹配（你的场景只有5~8条缝，暴力O(n²)足够）
+std::vector<int> SeamTracker::update(const std::vector<int>& detections) {
+
+    // 1. 所有轨迹先预测
+    for (auto& t : tracks) t.predict();
+
+    // 2. 贪心匹配：检测 → 轨迹（距离最近且在门限内）
+    int nT = tracks.size(), nD = detections.size();
+    std::vector<bool> matched_track(nT, false);
+    std::vector<bool> matched_det(nD, false);
+
+    // 按距离从小到大排列所有 (track_i, det_j) 对
+    std::vector<std::tuple<double,int,int>> pairs;
+    for (int i = 0; i < nT; i++)
+        for (int j = 0; j < nD; j++) {
+            double dist = std::abs(tracks[i].predicted_x() - detections[j]);
+            if (dist < GATE) pairs.emplace_back(dist, i, j);
+        }
+    std::sort(pairs.begin(), pairs.end());
+
+    for (auto& [dist, ti, dj] : pairs) {
+        if (matched_track[ti] || matched_det[dj]) continue;
+        tracks[ti].update(detections[dj]);
+        matched_track[ti] = true;
+        matched_det[dj]   = true;
+    }
+
+    // 3. 未匹配的轨迹：miss 计数
+    for (int i = 0; i < nT; i++)
+        if (!matched_track[i]) tracks[i].mark_missed();
+
+    // 4. 未匹配的检测：新建 tentative 轨迹
+    for (int j = 0; j < nD; j++) {
+        if (!matched_det[j]) {
+            SeamTrack t;
+            t.id        = next_id++;
+            t.x         = detections[j];
+            t.vx        = 0.0;
+            t.hits      = 1;
+            t.misses    = 0;
+            t.confirmed = false;
+            tracks.push_back(t);
+        }
+    }
+
+    // 5. 删除死亡轨迹
+    tracks.erase(
+        std::remove_if(tracks.begin(), tracks.end(),
+                       [](const SeamTrack& t){ return t.is_dead(); }),
+        tracks.end());
+
+    return confirmed_xs();
+}
 
 
