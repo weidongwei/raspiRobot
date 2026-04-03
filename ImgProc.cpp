@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "ImgProc.h"
+#include "SeamTracker.h"
 using json = nlohmann::json;
 
 VisualConfig vConfig;
@@ -1081,49 +1082,13 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> result
 }
 
 // 检测主函数
-// int detectMain(cv::Mat originImage){
-//     cv::Mat displayImage;
-//     std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
-//     std::vector<LaserData> smoothData = smooth(data);
-//     std::vector<MatchedSeamPair> results = findSeam(smoothData);
-//     cv::Mat finalMat = drawSeam(displayImage, results, data);
-
-//     std::string filename  = getTimeString() + "_displayImage" + ".jpg";
-//     std::string save_path = vConfig.proc_path + filename;
-//     cv::imwrite(save_path, finalMat);
-//     // cv::imshow("Final Detection", finalMat);
-//     cv::waitKey(1);
-
-//     return 0;
-// }
-
-//检测主函数（添加目标检测）
-SeamTracker g_tracker1;   // Laser 1
-SeamTracker g_tracker2;   // Laser 2
+SeamTracker seamTracker;
 int detectMain(cv::Mat originImage){
     cv::Mat displayImage;
     std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
     std::vector<LaserData> smoothData = smooth(data);
-    std::vector<MatchedSeamPair> raw = findSeam(smoothData);
-    // ── 把检测结果喂给跟踪器 ──────────────────────────────
-    std::vector<int> det1, det2;
-    for (auto& r : raw) {
-        det1.push_back(r.s1.x_peak);
-        det2.push_back(r.s2.x_peak);
-    }
-    std::vector<int> stable1 = g_tracker1.update(det1);
-    std::vector<int> stable2 = g_tracker2.update(det2);
-
-    // ── 用稳定结果重建 MatchedSeamPair 用于画线 ──────────
-    std::vector<MatchedSeamPair> stableResults;
-    int n = std::min(stable1.size(), stable2.size());
-    for (int i = 0; i < n; i++) {
-        MatchedSeamPair mp;
-        mp.s1.x_peak = stable1[i];
-        mp.s2.x_peak = stable2[i];
-        mp.total_score = 1.0;
-        stableResults.push_back(mp);
-    }
+    std::vector<MatchedSeamPair> results = findSeam(smoothData);
+    std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
     cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
 
     std::string filename  = getTimeString() + "_displayImage" + ".jpg";
@@ -1136,58 +1101,5 @@ int detectMain(cv::Mat originImage){
 }
 
 
-// 匈牙利最近邻匹配（你的场景只有5~8条缝，暴力O(n²)足够）
-std::vector<int> SeamTracker::update(const std::vector<int>& detections) {
-
-    // 1. 所有轨迹先预测
-    for (auto& t : tracks) t.predict();
-
-    // 2. 贪心匹配：检测 → 轨迹（距离最近且在门限内）
-    int nT = tracks.size(), nD = detections.size();
-    std::vector<bool> matched_track(nT, false);
-    std::vector<bool> matched_det(nD, false);
-
-    // 按距离从小到大排列所有 (track_i, det_j) 对
-    std::vector<std::tuple<double,int,int>> pairs;
-    for (int i = 0; i < nT; i++)
-        for (int j = 0; j < nD; j++) {
-            double dist = std::abs(tracks[i].predicted_x() - detections[j]);
-            if (dist < GATE) pairs.emplace_back(dist, i, j);
-        }
-    std::sort(pairs.begin(), pairs.end());
-
-    for (auto& [dist, ti, dj] : pairs) {
-        if (matched_track[ti] || matched_det[dj]) continue;
-        tracks[ti].update(detections[dj]);
-        matched_track[ti] = true;
-        matched_det[dj]   = true;
-    }
-
-    // 3. 未匹配的轨迹：miss 计数
-    for (int i = 0; i < nT; i++)
-        if (!matched_track[i]) tracks[i].mark_missed();
-
-    // 4. 未匹配的检测：新建 tentative 轨迹
-    for (int j = 0; j < nD; j++) {
-        if (!matched_det[j]) {
-            SeamTrack t;
-            t.id        = next_id++;
-            t.x         = detections[j];
-            t.vx        = 0.0;
-            t.hits      = 1;
-            t.misses    = 0;
-            t.confirmed = false;
-            tracks.push_back(t);
-        }
-    }
-
-    // 5. 删除死亡轨迹
-    tracks.erase(
-        std::remove_if(tracks.begin(), tracks.end(),
-                       [](const SeamTrack& t){ return t.is_dead(); }),
-        tracks.end());
-
-    return confirmed_xs();
-}
 
 

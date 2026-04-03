@@ -19,7 +19,7 @@ pthread_mutex_t laserMutex;
 pthread_mutex_t canReceiveMutex;
 
 THREADINFO threadInfo[TOTALTHREADNUM] = { 
-    {THR_CAN_RECEIVE, "CANRECEIVE", THR_HUNGUP}, 
+    {THR_CAN_RECEIVE, "CANRECEIVE", THR_HUNGUP},
     {THR_LASER_CONTROL, "LASERCONTROL", THR_HUNGUP},
     {THR_PHOTO_CONTROL, "PHOTOCONTROL", THR_HUNGUP},
     {THR_MOTOR_STATUS, "MOTORSTATUS", THR_HUNGUP}
@@ -86,7 +86,7 @@ int main(int argc, char *argv[]){
             int motor_id = atoi(argv[2]);
             float angle = atof(argv[3]);
             bool dir = (angle >=0) ? true : false;
-            position_control_t_x(motor_id, dir, 1500, 500, 3000, abs(angle), 0, false);
+            position_control_t_x(motor_id, dir, 2000, 500, 3000, abs(angle), 0, false);
         }
 
         
