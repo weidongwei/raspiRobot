@@ -1,8 +1,8 @@
 {
-    "origin_img_path": "/home/dw/robot/image/origin_image4/origin/",
-    "proc_path": "/home/dw/robot/image/origin_image4/proc_target/",
-    "diff_path": "/home/dw/robot/image/origin_image4/diff/",
-    "csv_path": "/home/dw/robot/image/origin_image4/csv/",
+    "origin_img_path": "/home/dw/robot/image/origin_image3/origin/",
+    "proc_path": "/home/dw/robot/image/origin_image3/proc_target/",
+    "diff_path": "/home/dw/robot/image/origin_image3/diff/",
+    "csv_path": "/home/dw/robot/image/origin_image3/csv/",
 
     "laser_duty": 0.5,                 "ldu_comment": "激光占空比",
     "exposure_time": 200,              "eti_comment": "相机曝光时间(ms)",

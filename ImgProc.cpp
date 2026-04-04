@@ -2,7 +2,6 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <time.h>
-#include <vector>
 #include <chrono>
 #include <ctime>
 #include <fstream>
@@ -12,8 +11,10 @@
 #include <set>
 #include <nlohmann/json.hpp>
 
+
 #include "ImgProc.h"
 #include "SeamTracker.h"
+#include "detectLaser.h"
 using json = nlohmann::json;
 
 VisualConfig vConfig;
@@ -68,6 +69,61 @@ std::string getTimeString(){
     oss << std::put_time(&tm_time, "%Y%m%d_%H%M%S");
     return oss.str();
 }
+
+// 读取激光点CSV文件保存到LaserData数组中
+std::vector<LaserData> readLaserCSV(const std::string& filename) {
+    std::vector<LaserData> dataList;
+    std::ifstream file(filename);
+
+    // 检查文件是否成功打开
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open file " << filename << std::endl;
+        return dataList; // 返回空列表
+    }
+
+    std::string line;
+    // 2. 跳过表头 (laser_id,x_pixel,y_pixel,distance_cm)
+    if (!std::getline(file, line)) {
+        return dataList;
+    }
+
+    // 3. 逐行解析数据
+    while (std::getline(file, line)) {
+        // 跳过空行
+        if (line.empty()) continue;
+
+        std::stringstream ss(line);
+        std::string item;
+        LaserData row;
+
+        try {
+            // 解析 laser_id
+            std::getline(ss, item, ',');
+            row.laser_id = std::stoi(item);
+
+            // 解析 x_pixel
+            std::getline(ss, item, ',');
+            row.x_pixel = std::stoi(item);
+
+            // 解析 y_pixel
+            std::getline(ss, item, ',');
+            row.y_pixel = std::stoi(item);
+
+            // 解析 distance_cm
+            std::getline(ss, item, ',');
+            row.distance_cm = std::stod(item);
+
+            dataList.push_back(row);
+        } catch (const std::exception& e) {
+            // 报错信息：指示哪一行出了问题
+            std::cerr << "Warning: Skipping malformed line: " << line << " (" << e.what() << ")" << std::endl;
+        }
+    }
+
+    file.close();
+    return dataList;
+}
+
 
 // 实时检测图像
 int takeVedio(){
@@ -260,516 +316,6 @@ int userImgProc1(cv::Mat *theMat, long beginTime, long afterTime){
     sleep(200);
     // printf("imgproc 1---------------------------完成 20秒\n");
     return 0;
-}
-
-bool calibrateCameraFromImages(
-    const std::vector<cv::Mat>& images,
-    cv::Size boardSize,
-    float squareSize,
-    cv::Mat& cameraMatrix,
-    cv::Mat& distCoeffs,
-    double& reprojError,
-    const std::string& debugSaveDir
-) {
-    std::vector<std::vector<cv::Point2f>> imagePoints;
-    std::vector<std::vector<cv::Point3f>> objectPoints;
-
-    // 构造棋盘世界坐标
-    std::vector<cv::Point3f> objp;
-    for (int i = 0; i < boardSize.height; ++i) {
-        for (int j = 0; j < boardSize.width; ++j) {
-            objp.emplace_back(j * squareSize,
-                              i * squareSize,
-                              0.0f);
-        }
-    }
-
-    cv::Size imageSize;
-    int imgIdx = 0;
-
-    for (const auto& img : images) {
-        if (img.empty()) {
-            imgIdx++;
-            continue;
-        }
-
-        imageSize = img.size();
-
-        cv::Mat gray;
-        cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY);
-
-        std::vector<cv::Point2f> corners;
-        bool found = cv::findChessboardCorners(
-            gray,
-            boardSize,
-            corners,
-            cv::CALIB_CB_ADAPTIVE_THRESH |
-            cv::CALIB_CB_NORMALIZE_IMAGE
-        );
-
-        // ---------- 保存中间图像 ----------
-        cv::Mat vis = img.clone();
-
-        if (found) {
-            cv::cornerSubPix(
-                gray,
-                corners,
-                cv::Size(11, 11),
-                cv::Size(-1, -1),
-                cv::TermCriteria(
-                    cv::TermCriteria::EPS |
-                    cv::TermCriteria::COUNT,
-                    30, 0.001
-                )
-            );
-
-            imagePoints.push_back(corners);
-            objectPoints.push_back(objp);
-
-            cv::drawChessboardCorners(
-                vis,
-                boardSize,
-                corners,
-                found
-            );
-        }
-
-        // 保存图像（无论成功还是失败）
-        std::ostringstream name;
-        name << debugSaveDir << "/calib_"
-             << imgIdx
-             << (found ? "_ok.jpg" : "_fail.jpg");
-
-        cv::imwrite(name.str(), vis);
-        imgIdx++;
-    }
-
-    if (imagePoints.size() < 10) {
-        std::cerr << "Not enough valid calibration images." << std::endl;
-        return false;
-    }
-
-    std::vector<cv::Mat> rvecs, tvecs;
-
-    double rms = cv::calibrateCamera(
-        objectPoints,
-        imagePoints,
-        imageSize,
-        cameraMatrix,
-        distCoeffs,
-        rvecs,
-        tvecs
-    );
-
-    // ---------- 计算重投影误差 ----------
-    double totalError = 0.0;
-    size_t totalPoints = 0;
-
-    for (size_t i = 0; i < objectPoints.size(); ++i) {
-        std::vector<cv::Point2f> projected;
-        cv::projectPoints(
-            objectPoints[i],
-            rvecs[i],
-            tvecs[i],
-            cameraMatrix,
-            distCoeffs,
-            projected
-        );
-
-        double err = cv::norm(imagePoints[i], projected, cv::NORM_L2);
-        totalError += err * err;
-        totalPoints += objectPoints[i].size();
-    }
-
-    reprojError = std::sqrt(totalError / totalPoints);
-
-    return true;
-}
-
-//相机标定
-int biaoding(){
-    std::vector<cv::Mat> images;
-    // 读取标定图像
-    for (int i = 1; i <= 22; ++i) {
-        std::string path = "/home/dw/robot/image/origin_image/biaoding" + std::to_string(i) + ".jpg";
-        cv::Mat img = cv::imread(path);
-        if (!img.empty())
-            images.push_back(img);
-    }
-
-    cv::Mat cameraMatrix, distCoeffs;
-    double reprojError;
-
-    bool ok = calibrateCameraFromImages(
-        images,
-        cv::Size(11, 8),
-        3.0f,
-        cameraMatrix,
-        distCoeffs,
-        reprojError,
-        "/home/dw/robot/image/origin_image"
-    );
-
-    if (ok) {
-        std::cout << "\n===== Camera Calibration Result =====\n";
-
-        std::cout << "Camera Matrix (K):\n";
-        std::cout << cameraMatrix << std::endl;
-
-        std::cout << "\nDistortion Coefficients (D):\n";
-        std::cout << distCoeffs << std::endl;
-
-        std::cout << "\nReprojection Error:\n";
-        std::cout << reprojError << std::endl;
-
-        std::cout << "=====================================\n";
-    }
-    return 0;
-}
-
-//激光像素坐标转实际距离,平面到喷嘴的距离
-double y_pixel_to_distance1(double y_pixel) {
-    double a = 5.63095238;
-    double b = -97.55952381;
-    double c = 462.5952381;
-
-    double A = a;
-    double B = b;
-    double C = c - y_pixel;
-
-    double delta = B*B - 4*A*C;
-    if (delta < 0) return -1; // 无解
-
-    double d1 = (-B + sqrt(delta)) / (2*A);
-    double d2 = (-B - sqrt(delta)) / (2*A);
-
-
-    return (d1 >= 0 && d1 <= 9) ? d1 : d2;
-}
-
-double y_pixel_to_distance2(double y_pixel) {
-    double a = 4.35714286;
-    double b = -87.23809524;
-    double c = 523.88095238;
-
-    double A = a;
-    double B = b;
-    double C = c - y_pixel;
-
-    double delta = B*B - 4*A*C;
-    if (delta < 0) return -1; // 无解
-
-    double d1 = (-B + sqrt(delta)) / (2*A);
-    double d2 = (-B - sqrt(delta)) / (2*A);
-
-
-    return (d1 >= 0 && d1 <= 9) ? d1 : d2;
-}
-
-// 读取激光点CSV文件保存到LaserData数组中
-std::vector<LaserData> readLaserCSV(const std::string& filename) {
-    std::vector<LaserData> dataList;
-    std::ifstream file(filename);
-
-    // 检查文件是否成功打开
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not open file " << filename << std::endl;
-        return dataList; // 返回空列表
-    }
-
-    std::string line;
-    // 2. 跳过表头 (laser_id,x_pixel,y_pixel,distance_cm)
-    if (!std::getline(file, line)) {
-        return dataList;
-    }
-
-    // 3. 逐行解析数据
-    while (std::getline(file, line)) {
-        // 跳过空行
-        if (line.empty()) continue;
-
-        std::stringstream ss(line);
-        std::string item;
-        LaserData row;
-
-        try {
-            // 解析 laser_id
-            std::getline(ss, item, ',');
-            row.laser_id = std::stoi(item);
-
-            // 解析 x_pixel
-            std::getline(ss, item, ',');
-            row.x_pixel = std::stoi(item);
-
-            // 解析 y_pixel
-            std::getline(ss, item, ',');
-            row.y_pixel = std::stoi(item);
-
-            // 解析 distance_cm
-            std::getline(ss, item, ',');
-            row.distance_cm = std::stod(item);
-
-            dataList.push_back(row);
-        } catch (const std::exception& e) {
-            // 报错信息：指示哪一行出了问题
-            std::cerr << "Warning: Skipping malformed line: " << line << " (" << e.what() << ")" << std::endl;
-        }
-    }
-
-    file.close();
-    return dataList;
-}
-
-
-
-// 预处理函数(去畸变、绿色通道增强及平滑处理)
-cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut) {
-    // 去畸变 (保存 undistortedOut 用于后续绘图)
-    cv::undistort(input, undistortedOut, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
-
-    // 通道增强（绿色提取）
-    std::vector<cv::Mat> bgr;
-    cv::split(undistortedOut, bgr);
-    cv::Mat diff = bgr[1] - 0.5 * (bgr[0] + bgr[2]);
-    
-    cv::normalize(diff, diff, 0, 255, cv::NORM_MINMAX);
-    diff.convertTo(diff, CV_8U);
-    cv::GaussianBlur(diff, diff, cv::Size(5, 5), 0);
-    return diff;
-}
-
-// 计算当前轮廓组合的得分
-double calculateScore(const std::vector<std::vector<cv::Point>>& contours) {
-    if (contours.empty()) return 0.0;
-    struct LaserMetric {
-        double length;
-        double area;
-    };
-
-    std::vector<LaserMetric> metrics;
-    for (const auto& cnt : contours) {
-        double area = cv::contourArea(cnt);
-        if (area < 10.0) continue; 
-        double length = cv::arcLength(cnt, false) * 0.5;
-        metrics.push_back({length, area});
-    }
-
-    if (metrics.empty()) return 0.0;
-    
-    // 按长度排序，取前两个
-    std::sort(metrics.begin(), metrics.end(), [](const LaserMetric& a, const LaserMetric& b){
-        return a.length > b.length;
-    });
-
-    double total_len = 0;
-    double total_area = 0;
-    int count = std::min((int)metrics.size(), 2); // 确保不会超过实际数量
-    for (int i = 0; i < count; ++i) {
-        total_len += metrics[i].length;
-        total_area += metrics[i].area;
-    }
-
-    // 长度评分
-    double s_len = 0.0;
-    double ideal_l = vConfig.best_laser_length;
-    if (total_len <= ideal_l) {
-        s_len = total_len / ideal_l;
-    } else {
-        s_len = std::max(0.0, 1.0 - (total_len - ideal_l) / (ideal_l/2));
-    }
-
-    // 细度评分
-    double s_thin = 0.0;
-    double ideal_w = vConfig.best_laser_width;
-    double ideal_a = ideal_l * ideal_w;
-
-    if (total_area <= ideal_a) {
-        s_thin = total_area / ideal_a;
-    } else {
-        s_thin = std::max(0.0, 1.0 - (total_area - ideal_a) / (ideal_a + 1e-5));
-    }
-    
-
-    // 综合加权
-    double final_score = (s_len * vConfig.ratio_laser_length) + (s_thin * vConfig.ratio_laser_width);
-
-    return final_score;
-}
-
-// 轮廓检测与过滤
-std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
-    double minVal, maxVal;
-    cv::minMaxLoc(diff, &minVal, &maxVal);
-    
-    int start_thresh = static_cast<int>(maxVal * 0.65); 
-    int end_thresh = vConfig.threshold_value_min;
-    int step = vConfig.threshold_value_rate;
-
-    double max_total_score = -1.0;
-    int best_thresh = start_thresh;
-    std::vector<std::vector<cv::Point>> best_contours;
-
-    for (int thresh = start_thresh; thresh >= end_thresh; thresh -= step) {
-        cv::Mat mask;
-        cv::threshold(diff, mask, thresh, 255, cv::THRESH_BINARY);
-        
-        std::vector<std::vector<cv::Point>> current_contours;
-        cv::findContours(mask, current_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
-        //
-        // std::string filename  = getTimeString() + "_diff" + ".jpg";
-        // std::string save_path = vConfig.diff_path + filename;
-        // cv::imwrite(save_path, diff);
-        //
-
-        // 调用新评分系统
-        double score = calculateScore(current_contours);
-
-        
-        // 记录最优解
-        if (score > max_total_score) {
-            max_total_score = score;
-            best_thresh = thresh;
-            best_contours = current_contours;
-        }
-    }
-
-    std::cout << "最佳阈值: " << best_thresh << " 综合得分: " << max_total_score << std::endl;
-
-    // 最后的输出过滤：依然按面积保留前两个
-    std::sort(best_contours.begin(), best_contours.end(), [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
-        return cv::contourArea(a) > cv::contourArea(b);
-    });
-    
-    if (best_contours.size() > 2) best_contours.resize(2);
-    return best_contours;
-
-}
-
-// 中心线几何提取
-std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat& diff) {
-    std::vector<LaserContour> laser_contours;
-
-    // 权重设置
-    const double weight_top = 1;
-    const double weight_center = 1.0 - weight_top;
-
-    for (int i = 0; i < contours.size(); ++i) {
-        cv::Mat mask = cv::Mat::zeros(diff.size(), CV_8U);
-        
-        // std::string filename  = "test.jpg";
-        // std::string save_path = vConfig.proc_path + filename;
-        // cv::imwrite(save_path, diff);
-        
-        cv::drawContours(mask, contours, i, cv::Scalar(255), cv::FILLED);
-        
-        cv::Rect box = cv::boundingRect(contours[i]);
-        LaserContour lc;
-        double y_sum = 0;
-
-        for (int x = box.x; x < box.x + box.width; ++x) {
-            int first_y = -1, last_y = -1;
-            for (int y = box.y; y < box.y + box.height; ++y) {
-                if (mask.at<uchar>(y, x) > 0 && diff.at<uchar>(y, x) > 0) {
-                    if (first_y == -1) first_y = y;
-                    last_y = y;
-                }
-            }
-            if (first_y != -1) {
-                int center_y = (first_y + last_y) / 2;
-                // int center_y = first_y;
-                
-                int top_y = first_y;
-                int fused_y = std::round(center_y * weight_center + top_y * weight_top);
-
-                lc.xs.push_back(x);
-                lc.ys.push_back(fused_y);
-                y_sum += fused_y;
-            }
-        }
-        if (!lc.ys.empty()) {
-            lc.y_average = y_sum / lc.ys.size();
-            laser_contours.push_back(lc);
-        }
-    }
-    
-    // 判定上下激光类型
-    if (laser_contours.size() == 2) {
-        bool firstIsUpper = laser_contours[0].y_average < laser_contours[1].y_average;
-        laser_contours[0].laser_type = firstIsUpper ? 1 : 2;
-        laser_contours[1].laser_type = firstIsUpper ? 2 : 1;
-    } else if (laser_contours.size() == 1) {
-        laser_contours[0].laser_type = 1; // 默认
-    }
-    
-    return laser_contours;
-}
-
-// 保存结果与可视化
-cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData) {
-    // 红色轮廓绘制
-    for (const auto& contour : contours) {
-        double area = cv::contourArea(contour);
-        if (area > canvas.cols * canvas.rows * 0.0002) {
-            cv::drawContours(canvas, std::vector<std::vector<cv::Point>>{contour}, -1, cv::Scalar(0, 0, 255), 1);
-        }
-    }
-
-    // std::string timeStr = getTimeString();
-    // std::ofstream ofs(vConfig.csv_path + timeStr + "_points.csv");
-    // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
-
-    cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
-
-    // 提取数据并准备画中心点
-    for (const auto& lc : lcs) {
-        for (size_t i = 0; i < lc.xs.size(); ++i) {
-            int x = lc.xs[i], y = lc.ys[i];
-            double dis = (lc.laser_type == 1) ? y_pixel_to_distance1(y) : y_pixel_to_distance2(y);
-            if (dis <= 0) continue;
-
-            outData.push_back({lc.laser_type, x, y, dis});
-            // ofs << lc.laser_type << "," << x << "," << y << "," << dis << "\n";
-            mask_center.at<uchar>(y, x) = 255;
-        }
-    }
-    
-    // 闭运算修复断线并画出蓝色中心点
-    cv::morphologyEx(mask_center, mask_center, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 1)));
-    for (int y = 0; y < mask_center.rows; ++y) {
-        for (int x = 0; x < mask_center.cols; ++x) {
-            if (mask_center.at<uchar>(y, x) > 0)
-                cv::circle(canvas, cv::Point(x, y), 1, cv::Scalar(255, 0, 0), -1);
-        }
-    }
-
-    // cv::imwrite(vConfig.proc_path + timeStr + "_detected.jpg", canvas);
-    // ofs.close();
-    return canvas;
-}
-
-// 检测激光中心线主函数
-std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
-    cv::Mat undistortedImg;
-    std::vector<LaserData> laserPoints;
-
-    // 1. 预处理
-    cv::Mat diff = preprocessLaserImage(image, undistortedImg);
-
-    // 2. 找轮廓
-    auto contours = getLaserContours(diff);
-    if (contours.empty()) return {};
-
-    // 3. 提取中心线坐标
-    auto lcs = extractCenterlinePoints(contours, diff);
-
-    // 4. 保存与可视化
-    cv::Mat canvas = saveAndVisualize(contours, lcs, undistortedImg, diff, laserPoints);
-    
-    *imageOut = canvas;
-
-    std::cout << "激光中心线检测完成。" << std::endl;
-    return laserPoints;
 }
 
 

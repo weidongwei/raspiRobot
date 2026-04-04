@@ -91,17 +91,15 @@ struct MatchedSeamPair {
 
 bool loadVisualConfig(VisualConfig& cfg, const std::string& filename);
 std::string getTimeString();
+std::vector<LaserData> readLaserCSV(const std::string& filename);
+
+
 int takePic();
 int takeVedio();
 int saveVedio();
 int userImgProc0(cv::Mat *theMat, long beginTime, long afterTime);
 int userImgProc1(cv::Mat *theMat, long beginTime, long afterTime);
 
-bool calibrateCameraFromImages( const std::vector<cv::Mat>& images, cv::Size boardSize, float squareSize, cv::Mat& cameraMatrix, cv::Mat& distCoeffs, double& reprojError, const std::string& debugSaveDir );
-int biaoding();
-double y_pixel_to_distance1(double y_pixel);
-double y_pixel_to_distance2(double y_pixel);
-std::vector<LaserData> readLaserCSV(const std::string& filename);
 
 cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut);
 double calculateScore(const std::vector<std::vector<cv::Point>>& contours);
