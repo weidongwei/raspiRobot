@@ -637,6 +637,11 @@ int detectMain(cv::Mat originImage){
     std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
     cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
 
+    // cv::Mat finalMat = drawSeam(displayImage, results, data);
+
+
+
+
     std::string filename  = getTimeString() + "_displayImage" + ".jpg";
     std::string save_path = vConfig.proc_path + filename;
     cv::imwrite(save_path, finalMat);

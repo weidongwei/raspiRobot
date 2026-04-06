@@ -174,18 +174,35 @@ std::vector<MatchedSeamPair> SeamTracker::update(std::vector<MatchedSeamPair>& r
         const auto& track = tracks[i];
         if (!track.confirmed || !track.hasPair) continue;
 
+        // MatchedSeamPair smoothed = pairStore[i];
+        // int kfX = (int)std::round(track.currentX());
+
+        // // 两条激光线分别按各自偏差修正，保持两线相对结构不变
+        // int d1 = kfX - smoothed.s1.x_peak;
+        // int d2 = kfX - smoothed.s2.x_peak;
+        // smoothed.s1.x_peak     += d1;
+        // smoothed.s1.left_foot  += d1;
+        // smoothed.s1.right_foot += d1;
+        // smoothed.s2.x_peak     += d2;
+        // smoothed.s2.left_foot  += d2;
+        // smoothed.s2.right_foot += d2;
+
         MatchedSeamPair smoothed = pairStore[i];
         int kfX = (int)std::round(track.currentX());
 
-        // 两条激光线分别按各自偏差修正，保持两线相对结构不变
-        int d1 = kfX - smoothed.s1.x_peak;
-        int d2 = kfX - smoothed.s2.x_peak;
-        smoothed.s1.x_peak     += d1;
-        smoothed.s1.left_foot  += d1;
-        smoothed.s1.right_foot += d1;
-        smoothed.s2.x_peak     += d2;
-        smoothed.s2.left_foot  += d2;
-        smoothed.s2.right_foot += d2;
+        // 原始中点
+        int rawMidX = (smoothed.s1.x_peak + smoothed.s2.x_peak) / 2;
+
+        // 统一平移量：卡尔曼平滑中点 - 原始中点
+        int d = kfX - rawMidX;
+
+        // s1 和 s2 用同一个 d 整体平移
+        smoothed.s1.x_peak     += d;
+        smoothed.s1.left_foot  += d;
+        smoothed.s1.right_foot += d;
+        smoothed.s2.x_peak     += d;
+        smoothed.s2.left_foot  += d;
+        smoothed.s2.right_foot += d;
 
         stableOutput.push_back(smoothed);
     }

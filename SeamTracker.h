@@ -23,6 +23,9 @@ struct SeamKalman {
     double P11 = 10.0;
 
     // ---- 噪声参数（调参说明见 SeamTracker.cpp） ----
+    // Q_x 小 → 更相信预测值
+    // Q_v 大 → 更相信预测值
+    // R   小 → 更相信观测值
     double Q_x = 0.5;   // 过程噪声-位置
     double Q_v = 0.1;   // 过程噪声-速度
     double R   = 8.0;   // 测量噪声
