@@ -65,7 +65,7 @@ int main(int argc, char *argv[]){
     canReceiveStatus = true;
     sleep(1);
     wakeupThreadWait(THR_CAN_RECEIVE);
-    // wakeupThreadWait(THR_MOTOR_STATUS);
+    wakeupThreadWait(THR_MOTOR_STATUS);
     sleep(1);
     if(argc>1) {
         if(strcmp(argv[1], "stop")==0)              { int motor_id = atoi(argv[2]); stop_motor(motor_id); }
@@ -166,6 +166,10 @@ int main(int argc, char *argv[]){
             setLaserStatus(true);
             wakeupThreadWait(THR_LASER_CONTROL);
             takePic();
+        }
+
+        else if(strcmp(argv[1], "cctvthread")==0){
+            cctv();
         }
 
         else if(strcmp(argv[1], "photothread")==0){

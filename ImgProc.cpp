@@ -19,6 +19,8 @@ using json = nlohmann::json;
 
 VisualConfig vConfig;
 
+SeamTracker seamTracker;
+
 
 
 // 加载json配置文件
@@ -125,6 +127,41 @@ std::vector<LaserData> readLaserCSV(const std::string& filename) {
 }
 
 
+// 监控
+int cctv(){
+    cv::VideoCapture cap(2, cv::CAP_V4L2);
+    // cv::VideoCapture cap;
+    // cap.open(0, cv::CAP_V4L2);
+    if (!cap.isOpened()) {
+        std::cerr << "无法打开摄像头" << 0 << std::endl;
+        return false;
+    }
+    cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
+    cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
+    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);                     // 有的驱动 1=手动，3=自动，需测试// 2. 关闭背光补偿 (OpenCV 对应宏是 CAP_PROP_BACKLIGHT)
+    cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
+    cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);      // 曝光时间整数ms(最小值50ms)
+    cap.set(cv::CAP_PROP_SHARPNESS, 100);                       // 设置锐度为 100(0 ~ 100)
+    cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);       // 设置亮度为 50(-64 ~ 64)
+
+    cv::Mat frame;
+    cv::waitKey(1000);
+
+
+    while (true) {
+        cap >> frame;
+        if (frame.empty()) {
+            std::cerr << "无法获取图像帧。" << std::endl;
+            break;
+        }
+        cv::imshow("Camera Video", frame);
+        cv::waitKey(100);
+    }
+    cap.release();
+    cv::destroyAllWindows();
+    return 0;
+}
+
 // 实时检测图像
 int takeVedio(){
     cv::VideoCapture cap(0, cv::CAP_V4L2);
@@ -159,7 +196,8 @@ int takeVedio(){
         std::vector<LaserData> data = detectLaserCenter(undistorted, &displayImage);
         std::vector<LaserData> smoothData = smooth(data);
         std::vector<MatchedSeamPair> results = findSeam(smoothData);
-        cv::Mat finalMat = drawSeam(displayImage, results, data);
+        std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
+        cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
         std::cout << "#################################################################" << std::endl;
 
         cv::imshow("Camera Video", finalMat);
@@ -628,7 +666,6 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> result
 }
 
 // 检测主函数
-SeamTracker seamTracker;
 int detectMain(cv::Mat originImage){
     cv::Mat displayImage;
     std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
@@ -642,9 +679,9 @@ int detectMain(cv::Mat originImage){
 
 
 
-    std::string filename  = getTimeString() + "_displayImage" + ".jpg";
-    std::string save_path = vConfig.proc_path + filename;
-    cv::imwrite(save_path, finalMat);
+    // std::string filename  = getTimeString() + "_displayImage" + ".jpg";
+    // std::string save_path = vConfig.proc_path + filename;
+    // cv::imwrite(save_path, finalMat);
     // cv::imshow("Final Detection", finalMat);
     cv::waitKey(1);
 
