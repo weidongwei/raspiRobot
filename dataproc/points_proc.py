@@ -4,7 +4,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 # 读取数据
-csv_file = "/home/dw/robot/image/proc_laser11/20260129_144406_points_smooth.csv"
+csv_file = "/home/dw/robot/dataproc/20260408_181149_points.csv"
 try:
     df = pd.read_csv(csv_file)
 except FileNotFoundError:
@@ -63,7 +63,7 @@ ax.set_title("Laser Reconstruction - Saved Image")
 ax.legend()
 
 # 保存图片
-output_file = "reconstruction_result.png"
+output_file = "reconstruction_result1.png"
 plt.tight_layout()
 plt.savefig(output_file, dpi=150)
 print(f"--- 运行成功！结果已保存为: {output_file} ---")

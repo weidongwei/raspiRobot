@@ -1,4 +1,5 @@
 #include <opencv2/opencv.hpp>
+#include <fstream>
 
 #include "detectLaser.h"
 #include "calibrateCamera.h"
@@ -118,15 +119,17 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
 
     std::cout << "最佳阈值: " << best_thresh << " 综合得分: " << max_total_score << std::endl;
 
-    // 最后的输出过滤：依然按面积保留前两个
+    //最后的输出过滤：依然按面积保留前两个
     std::sort(best_contours.begin(), best_contours.end(), [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
         return cv::contourArea(a) > cv::contourArea(b);
     });
     
-    if (best_contours.size() > 2) best_contours.resize(2);
+    if (best_contours.size() > 5) best_contours.resize(5);
     return best_contours;
 
 }
+
+
 
 // 中心线几何提取
 std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat& diff) {
@@ -175,20 +178,56 @@ std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<
         }
     }
     
-    // 判定上下激光类型
-    if (laser_contours.size() == 2) {
-        bool firstIsUpper = laser_contours[0].y_average < laser_contours[1].y_average;
-        laser_contours[0].laser_type = firstIsUpper ? 1 : 2;
-        laser_contours[1].laser_type = firstIsUpper ? 2 : 1;
-    } else if (laser_contours.size() == 1) {
-        laser_contours[0].laser_type = 1; // 默认
+    // // 判定上下激光类型
+    // if (laser_contours.size() == 2) {
+    //     bool firstIsUpper = laser_contours[0].y_average < laser_contours[1].y_average;
+    //     laser_contours[0].laser_type = firstIsUpper ? 1 : 2;
+    //     laser_contours[1].laser_type = firstIsUpper ? 2 : 1;
+    // } else if (laser_contours.size() == 1) {
+    //     laser_contours[0].laser_type = 1; // 默认
+    // }
+
+    // 3. 多轮廓身份判定逻辑
+    int num_found = laser_contours.size();
+    std::cout<< "num_found = " << num_found <<std::endl;
+    if (num_found >= 2) {
+        // 由于输入 contours 是按面积降序排列的，
+        // 因此 laser_contours[0] 和 [1] 就是最大的两个“领头羊”。
+        
+        // 首先确定这两个领头羊谁是上（1号），谁是下（2号）
+        int idxA = 0;
+        int idxB = 1;
+        if (laser_contours[idxA].y_average > laser_contours[idxB].y_average) {
+            std::swap(idxA, idxB);
+        }
+        
+        // 记录基准高度
+        double refY1 = laser_contours[idxA].y_average; // 较小的Y（靠上）
+        double refY2 = laser_contours[idxB].y_average; // 较大的Y（靠下）
+
+        // 为所有轮廓（包括领头羊和碎碎的小轮廓）分配编号
+        for (int i = 0; i < num_found; ++i) {
+            double currentY = laser_contours[i].y_average;
+            double distTo1 = std::abs(currentY - refY1);
+            double distTo2 = std::abs(currentY - refY2);
+
+            if (distTo1 < distTo2) {
+                laser_contours[i].laser_type = 1; // 离1号近，归为1号
+            } else {
+                laser_contours[i].laser_type = 2; // 离2号近，归为2号
+            }
+        }
+    } 
+    else if (num_found == 1) {
+        // 只有一个轮廓时，无法对比，默认标为 1
+        laser_contours[0].laser_type = 1;
     }
     
     return laser_contours;
 }
 
 // 保存结果与可视化
-cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData) {
+cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData) {
     // 红色轮廓绘制
     for (const auto& contour : contours) {
         double area = cv::contourArea(contour);
@@ -202,6 +241,23 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, co
     // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
 
     cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
+
+    // --- 多级排序 ---
+    std::sort(lcs.begin(), lcs.end(), [](const LaserContour& a, const LaserContour& b) {
+        // 1. 先按 laser_type 排序
+        if (a.laser_type != b.laser_type) {
+            return a.laser_type < b.laser_type;
+        }
+        
+        // 2. 编号相同时，按 X 坐标起始位置排序
+        // 增加判空保护，并确保比较的是每一段的“最左端”
+        if (!a.xs.empty() && !b.xs.empty()) {
+            return a.xs[0] < b.xs[0]; 
+        }
+        
+        // 3. 如果万一有一段是空的（理论上不应该），排在后面
+        return a.xs.empty() < b.xs.empty();
+    });
 
     // 提取数据并准备画中心点
     for (const auto& lc : lcs) {

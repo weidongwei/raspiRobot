@@ -129,7 +129,7 @@ std::vector<LaserData> readLaserCSV(const std::string& filename) {
 
 // 监控
 int cctv(){
-    cv::VideoCapture cap(2, cv::CAP_V4L2);
+    cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
@@ -164,11 +164,11 @@ int cctv(){
 
 // 实时检测图像
 int takeVedio(){
-    cv::VideoCapture cap(0, cv::CAP_V4L2);
+    cv::VideoCapture cap(2, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
-        std::cerr << "无法打开摄像头" << 0 << std::endl;
+        std::cerr << "无法打开摄像头" << 2 << std::endl;
         return false;
     }
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
@@ -209,11 +209,11 @@ int takeVedio(){
 }
 // 保存多张原始图像
 int saveVedio(){
-    cv::VideoCapture cap(0, cv::CAP_V4L2);
+    cv::VideoCapture cap(2, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
-        std::cerr << "无法打开摄像头" << 0 << std::endl;
+        std::cerr << "无法打开摄像头" << 2 << std::endl;
         return false;
     }
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
@@ -258,11 +258,11 @@ int saveVedio(){
 int takePic(){
     std::string filename  = "origin_" + getTimeString() + ".jpg";
     std::string save_path = vConfig.origin_img_path + filename;
-    cv::VideoCapture cap(0, cv::CAP_V4L2);
+    cv::VideoCapture cap(2, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
-        std::cerr << "无法打开摄像头" << 0 << std::endl;
+        std::cerr << "无法打开摄像头" << 2 << std::endl;
         return false;
     }
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
@@ -536,6 +536,40 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
                  << std::endl;
         }
     }
+
+    // // --- 新增：激光断裂处检测 (检测跳变) ---
+    // for (int i = 1; i < n; ++i) {
+    //     // 只有同一条激光线内的相邻点才计算跳变
+    //     if (smoothedData[i].laser_id == smoothedData[i-1].laser_id) {
+    //         int dx = std::abs(smoothedData[i].x_pixel - smoothedData[i-1].x_pixel);
+    //         int dy = std::abs(smoothedData[i].y_pixel - smoothedData[i-1].y_pixel);
+
+    //         // 如果跳变超过阈值 (10像素)
+    //         if (dx > 10 || dy > 10) {
+    //             SeamResult gapSeam;
+    //             gapSeam.id = smoothedData[i].laser_id;
+    //             // 取中点作为橘缝坐标
+    //             gapSeam.x_peak = (smoothedData[i].x_pixel + smoothedData[i-1].x_pixel) / 2;
+    //             gapSeam.dist = (smoothedData[i].distance_cm + smoothedData[i-1].distance_cm) / 2.0;
+                
+    //             // 模拟坡脚和宽度（由于是断裂，给一个理想化的评分参数）
+    //             gapSeam.left_foot = smoothedData[i-1].x_pixel;
+    //             gapSeam.right_foot = smoothedData[i].x_pixel;
+    //             gapSeam.width = dx;
+    //             gapSeam.depth = vConfig.best_depth; // 断裂处默认深度很大
+                
+    //             // 给断裂处一个极高的初始评分，因为它通常是最明显的特征
+    //             gapSeam.score = 1.0 * vConfig.ratio_width + 1.0 * vConfig.ratio_depth;
+
+    //             // 同样进行区域过滤
+    //             if(gapSeam.x_peak > 50 && gapSeam.x_peak < 600) {
+    //                 groupResults[gapSeam.id].push_back(gapSeam);
+    //                 std::cout << "[断裂检测] 发现跳变橘缝: id=" << gapSeam.id 
+    //                           << ", x=" << gapSeam.x_peak << " (Gap dx:" << dx << " dy:" << dy << ")" << std::endl;
+    //             }
+    //         }
+    //     }
+    // }
 
     // 找到最像橘缝的凹陷组合
     std::vector<MatchedSeamPair> tempMatchedPairs;
