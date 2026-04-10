@@ -144,6 +144,7 @@ void *laserControlThreadFunc(void* arg){
         }
         threadInfo[id].runningState = THR_RUN;
 
+        std::cout<< "激光打开"<< std::endl;
         while (getLaserStatus() == true && !beginExit) {
             digitalWrite(pin, HIGH);
             std::this_thread::sleep_for(std::chrono::microseconds(high_time));

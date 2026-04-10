@@ -164,7 +164,7 @@ int cctv(){
 
 // 实时检测图像
 int takeVedio(){
-    cv::VideoCapture cap(2, cv::CAP_V4L2);
+    cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
@@ -570,6 +570,7 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
     //         }
     //     }
     // }
+
 
     // 找到最像橘缝的凹陷组合
     std::vector<MatchedSeamPair> tempMatchedPairs;
