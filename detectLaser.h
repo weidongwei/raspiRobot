@@ -12,4 +12,14 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, co
 std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut);
 
 
+struct LaserResultContour {
+    double topY = -1.0;
+    double bottomY = -1.0;
+    bool found = false;
+};
+LaserResultContour detectDoubleLaserByContours(const cv::Mat& processed, int thresholdVal);
+void processFrame(cv::Mat frame);
+
+
+
 #endif // DETECTLASER_H

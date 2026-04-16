@@ -2,6 +2,7 @@
 #include <opencv2/opencv.hpp>
 
 
+#include "ImgProc.h"
 
 bool calibrateCameraFromImages(
     const std::vector<cv::Mat>& images,
@@ -127,12 +128,14 @@ bool calibrateCameraFromImages(
     return true;
 }
 
+
+
 //相机标定
 int biaoding(){
     std::vector<cv::Mat> images;
     // 读取标定图像
-    for (int i = 1; i <= 22; ++i) {
-        std::string path = "/home/dw/robot/image/origin_image/biaoding" + std::to_string(i) + ".jpg";
+    for (int i = 1; i <= 25; ++i) {
+        std::string path = "/home/dw/robot/image/calib_camera1/origin" + std::to_string(i) + ".jpg";
         cv::Mat img = cv::imread(path);
         if (!img.empty())
             images.push_back(img);
@@ -143,12 +146,12 @@ int biaoding(){
 
     bool ok = calibrateCameraFromImages(
         images,
-        cv::Size(11, 8),
-        3.0f,
+        cv::Size(11, 8),        //棋盘格内部角点的数量
+        3.0f,                   //方块大小(mm)
         cameraMatrix,
         distCoeffs,
         reprojError,
-        "/home/dw/robot/image/origin_image"
+        "/home/dw/robot/image/calib_camera1"
     );
 
     if (ok) {

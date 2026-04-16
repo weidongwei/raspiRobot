@@ -8,7 +8,8 @@
 // 预处理函数(去畸变、绿色通道增强及平滑处理)
 cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut) {
     // 去畸变 (保存 undistortedOut 用于后续绘图)
-    cv::undistort(input, undistortedOut, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
+    // cv::undistort(input, undistortedOut, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
+    undistortedOut = input.clone();
 
     // 通道增强（绿色提取）
     std::vector<cv::Mat> bgr;
@@ -310,3 +311,128 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
     return laserPoints;
 }
 
+
+
+
+
+//######################################  激光线标定  ######################################
+LaserResultContour detectDoubleLaserByContours(const cv::Mat& processed, int thresholdVal = 70) {
+    LaserResultContour result;
+    if (processed.empty()) return result;
+
+    // 1. 二值化：过滤噪声，只保留高亮区域
+    cv::Mat binary;
+    // 建议：如果还是偏上，可以尝试使用 cv::THRESH_OTSU 让它自动找阈值，
+    // 或者将阈值手动调高到 100-150
+    cv::threshold(processed, binary, thresholdVal, 255, cv::THRESH_BINARY);
+
+    // 2. 形态学处理 (可选但推荐)：消除毛刺和微小反光
+    // 先腐蚀后膨胀 (开运算)，消除上方的小亮点
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+    cv::morphologyEx(binary, binary, cv::MORPH_OPEN, kernel);
+    // 膨胀一次，让断裂的激光线连接起来
+    cv::dilate(binary, binary, kernel);
+
+    // 3. 查找轮廓
+    std::vector<std::vector<cv::Point>> contours;
+    std::vector<cv::Vec4i> hierarchy;
+    cv::findContours(binary, contours, hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    // 4. 过滤轮廓：只保留长宽比符合激光线的细长物体
+    struct ValidContour {
+        std::vector<cv::Point> points;
+        double area;
+        cv::Rect bbox;
+        double centroidY;
+    };
+    std::vector<ValidContour> validLasers;
+
+    for (size_t i = 0; i < contours.size(); i++) {
+        // 计算面积，过滤太小的噪点
+        double area = cv::contourArea(contours[i]);
+        if (area < 100) continue; // 面积太小，忽略
+
+        // 计算外接矩形，过滤形状不符的物体
+        cv::Rect bbox = cv::boundingRect(contours[i]);
+        double aspectRatio = (double)bbox.width / bbox.height;
+        
+        // 激光线应该是细长的（高宽比大），且占据图像一定宽度
+        if (aspectRatio < 3.0 || bbox.width < processed.cols * 0.2) continue;
+
+        // 计算几何中心 (Moments)
+        cv::Moments mu = cv::moments(contours[i], false);
+        if (mu.m00 == 0) continue; // 面积为0的情况
+
+        ValidContour vc;
+        vc.points = contours[i];
+        vc.area = area;
+        vc.bbox = bbox;
+        // 计算精确的几何中心Y坐标 (Cy = M01 / M00)
+        vc.centroidY = mu.m01 / mu.m00; 
+
+        validLasers.push_back(vc);
+    }
+
+    // 如果找到的有效轮廓少于两个，则失败
+    if (validLasers.size() < 2) {
+        std::cout << "Detected " << validLasers.size() << " contours. Not enough." << std::endl;
+        return result;
+    }
+
+    // 5. 对符合条件的轮廓按Y坐标排序 (确保 topY 是上面那条)
+    std::sort(validLasers.begin(), validLasers.end(), 
+              [](const ValidContour& a, const ValidContour& b) {
+                  return a.centroidY < b.centroidY; // 按Y升序排序
+              });
+
+    result.topY = validLasers[0].centroidY;
+    result.bottomY = validLasers[1].centroidY;
+    result.found = true;
+
+    // --- 可选调试：在原图上画出所有有效轮廓 ---
+    // cv::drawContours(frameForDebug, contours, -1, cv::Scalar(0, 255, 0), 1);
+    // ---
+
+    return result;
+}
+
+
+
+void processFrame(cv::Mat frame) {
+    if (frame.empty()) return;
+
+    cv::Mat undistorted;
+    // 1. 调用你的预处理函数
+    cv::Mat processed = preprocessLaserImage(frame, undistorted);
+
+    // 2. 调用新的轮廓检测函数 (阈值调高一点试试)
+    LaserResultContour res = detectDoubleLaserByContours(processed, 80); 
+
+    // 3. 结果可视化
+    if (res.found) {
+        // 画出中心线 (记得四舍五入)
+        int yTop = cvRound(res.topY);
+        int yBottom = cvRound(res.bottomY);
+
+        cv::line(undistorted, cv::Point(0, yTop), cv::Point(undistorted.cols, yTop), cv::Scalar(0, 0, 255), 2);
+        cv::line(undistorted, cv::Point(0, yBottom), cv::Point(undistorted.cols, yBottom), cv::Scalar(0, 0, 255), 2);
+        
+        std::cout << "Contour Center: TopY=" << res.topY << ", BottomY=" << res.bottomY << std::endl;
+    }
+
+    // 关键调试：观察二值化是否干净
+    // 如果激光线上方还有杂点，轮廓中心就会偏上！
+    cv::Mat binary;
+    cv::threshold(processed, binary, 80, 255, cv::THRESH_BINARY);
+    // cv::imshow("Debugging Binary", binary); 
+    // cv::imshow("Result with Centroids", undistorted);
+
+    std::string filename  = getTimeString() + "_undistorted" + ".jpg";
+    std::string save_path = vConfig.proc_path + filename;
+    cv::imwrite(save_path, undistorted);
+
+    cv::waitKey(1);
+
+}
+
+//######################################  激光线标定  ######################################

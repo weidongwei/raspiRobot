@@ -144,12 +144,14 @@ int cctv(){
     cap.set(cv::CAP_PROP_SHARPNESS, 100);                       // 设置锐度为 100(0 ~ 100)
     cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);       // 设置亮度为 50(-64 ~ 64)
 
+    cv::Mat origin_frame;
     cv::Mat frame;
     cv::waitKey(1000);
 
 
     while (true) {
-        cap >> frame;
+        cap >> origin_frame;
+        cv::undistort(origin_frame, frame, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
         if (frame.empty()) {
             std::cerr << "无法获取图像帧。" << std::endl;
             break;
@@ -168,7 +170,7 @@ int takeVedio(){
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
-        std::cerr << "无法打开摄像头" << 2 << std::endl;
+        std::cerr << "无法打开摄像头" << 0 << std::endl;
         return false;
     }
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
@@ -179,21 +181,21 @@ int takeVedio(){
     cap.set(cv::CAP_PROP_SHARPNESS, 100);                       // 设置锐度为 100(0 ~ 100)
     cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);       // 设置亮度为 50(-64 ~ 64)
 
+    cv::Mat origin_frame;
     cv::Mat frame;
     cv::waitKey(1000);
 
 
     while (true) {
-        cap >> frame;
+        cap >> origin_frame;
+        cv::undistort(origin_frame, frame, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
         if (frame.empty()) {
             std::cerr << "无法获取图像帧。" << std::endl;
             break;
         }
-        cv::Mat undistorted;
-        cv::undistort(frame, undistorted, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
 
         cv::Mat displayImage;
-        std::vector<LaserData> data = detectLaserCenter(undistorted, &displayImage);
+        std::vector<LaserData> data = detectLaserCenter(frame, &displayImage);
         std::vector<LaserData> smoothData = smooth(data);
         std::vector<MatchedSeamPair> results = findSeam(smoothData);
         std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
@@ -224,27 +226,27 @@ int saveVedio(){
     cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
     cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);  // 设置亮度为 50(-64 ~ 64)
 
+    cv::Mat origin_frame;
     cv::Mat frame;
     cv::waitKey(1000);
 
 
     while (true) {
-        cap >> frame;
+        cap >> origin_frame;
+        cv::undistort(origin_frame, frame, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
         if (frame.empty()) {
             std::cerr << "无法获取图像帧。" << std::endl;
             break;
         }
 
-        cv::Mat undistorted;
-        cv::undistort(frame, undistorted, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
 
         std::string filename  = "origin_" + getTimeString() + ".jpg";
         std::string save_path = vConfig.origin_img_path + filename;
-        // cv::imshow("Camera Video", undistorted);
+        // cv::imshow("Camera Video", frame);
         cv::waitKey(10);
-        cv::imwrite(save_path, undistorted); 
+        cv::imwrite(save_path, frame); 
         std::cout << "图像已保存到 " << save_path << std::endl;
-        cv::imshow("Camera Video", undistorted);
+        cv::imshow("Camera Video", frame);
         cv::waitKey(1000);
         // sleep(1);
         // detect_laser_edge(cv::imread("/home/dw/robot/image/1.jpg"));
@@ -258,11 +260,11 @@ int saveVedio(){
 int takePic(){
     std::string filename  = "origin_" + getTimeString() + ".jpg";
     std::string save_path = vConfig.origin_img_path + filename;
-    cv::VideoCapture cap(2, cv::CAP_V4L2);
+    cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
-        std::cerr << "无法打开摄像头" << 2 << std::endl;
+        std::cerr << "无法打开摄像头" << 0 << std::endl;
         return false;
     }
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
@@ -273,18 +275,18 @@ int takePic(){
     cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
     cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);  // 设置亮度为 50(-64 ~ 64)
 
+    cv::Mat origin_frame;
     cv::Mat frame;
     cv::waitKey(1000);
 
 
-    cap >> frame;
+    cap >> origin_frame;
+    cv::undistort(origin_frame, frame, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
     if (frame.empty()) {
         std::cerr << "无法获取图像帧。" << std::endl;
     }
-    cv::Mat undistorted;
-    cv::undistort(frame, undistorted, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
     cv::waitKey(10);
-    cv::imwrite(save_path, undistorted); 
+    cv::imwrite(save_path, frame);
     std::cout << "图像已保存到 " << save_path << std::endl;
     sleep(1000);
 

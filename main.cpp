@@ -11,6 +11,8 @@
 #include "communicate.h"
 #include "ImgProc.h"
 #include "thread.h"
+#include "calibrateCamera.h"
+#include "detectLaser.h"
 
 
 pthread_mutex_t threadLock[TOTALTHREADNUM];
@@ -217,6 +219,15 @@ int main(int argc, char *argv[]){
             // screw_motor_move(motor_id, angle);
         }
 
+        else if(strcmp(argv[1], "biaoding")==0){
+            std::string addr = argv[2];
+            processFrame(cv::imread(addr));
+        }
+
+
+
+
+        std::cout<< "命令结束！" <<std::endl;
 
         sleep(600);
         return 0;
