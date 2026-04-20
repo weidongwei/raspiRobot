@@ -396,10 +396,8 @@ LaserResultContour detectDoubleLaserByContours(const cv::Mat& processed, int thr
     return result;
 }
 
-
-
-void processFrame(cv::Mat frame) {
-    if (frame.empty()) return;
+LaserResultContour processFrame(cv::Mat frame) {
+    // if (frame.empty()) return;
 
     cv::Mat undistorted;
     // 1. 调用你的预处理函数
@@ -433,6 +431,41 @@ void processFrame(cv::Mat frame) {
 
     cv::waitKey(1);
 
+    return res;
+
 }
 
-//######################################  激光线标定  ######################################
+//########################################################################################
+
+
+//######################################  距离判断  ######################################
+// 通用函数，laser_id: 0~3
+double y_pixel_to_distance(double y_pixel, int laser_id) {
+    const LaserCoeffs& lc = LASER[laser_id];
+    const double TOL      = 1e-6;
+    const int    MAX_ITER = 100;
+
+    auto func = [&](double d) {
+        return lc.a * d*d*d + lc.b * d*d + lc.c * d + lc.e - y_pixel;
+    };
+
+    double fa = func(lc.d_min);
+    double fb = func(lc.d_max);
+
+    if (fa * fb > 0) return -1.0; // 超出标定范围
+
+    double lo = lc.d_min, hi = lc.d_max;
+    for (int i = 0; i < MAX_ITER; i++) {
+        double mid = (lo + hi) / 2.0;
+        double fm  = func(mid);
+
+        if (std::fabs(fm) < TOL || (hi - lo) / 2.0 < TOL)
+            return mid;
+
+        if (fa * fm < 0) { hi = mid; fb = fm; }
+        else             { lo = mid; fa = fm; }
+    }
+
+    return (lo + hi) / 2.0;
+}
+//#######################################################################################

@@ -1,6 +1,6 @@
 {
-    "origin_img_path": "/home/dw/robot/image/calib_camera1_laser/",
-    "proc_path": "/home/dw/robot/image/calib_camera1_laser/",
+    "origin_img_path": "/home/dw/robot/image/calib_camera2_laser/",
+    "proc_path": "/home/dw/robot/image/calib_camera2_laser/",
     "diff_path": "/home/dw/robot/image/origin_image12/diff/",
     "csv_path": "/home/dw/robot/image/origin_image12/csv/",
 

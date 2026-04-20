@@ -4,6 +4,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <fstream>
 #include <opencv2/opencv.hpp>
 
 
@@ -219,12 +220,27 @@ int main(int argc, char *argv[]){
             // screw_motor_move(motor_id, angle);
         }
 
-        else if(strcmp(argv[1], "biaoding")==0){
-            std::string addr = argv[2];
-            processFrame(cv::imread(addr));
+        else if(strcmp(argv[1], "biaodingbatch")==0){
+            std::vector<cv::String> filenames;
+            cv::glob(vConfig.origin_img_path + "*.jpg", filenames); // 自动按名称排序读取
+
+            std::string fname  = getTimeString() + "_laser" + ".csv";
+            std::string savePath = vConfig.origin_img_path + fname;
+            std::ofstream ofs(savePath);
+            ofs << "filename,TopY,BottomY\n";
+
+            for (const auto& file : filenames) {
+                cv::Mat frame = cv::imread(file);
+                if (frame.empty()) continue;
+                LaserResultContour res = processFrame(frame);
+                ofs << file << "," << res.topY << "," << res.bottomY << "\n";
+                sleep(1);
+            }
         }
 
-
+        else if(strcmp(argv[1], "ytodis")==0){
+            std::cout<< y_pixel_to_distance(250, 2) <<std::endl;
+        }
 
 
         std::cout<< "命令结束！" <<std::endl;
