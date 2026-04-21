@@ -68,16 +68,36 @@ int main(int argc, char *argv[]){
     canReceiveStatus = true;
     sleep(1);
     wakeupThreadWait(THR_CAN_RECEIVE);
-    // wakeupThreadWait(THR_MOTOR_STATUS);
+    wakeupThreadWait(THR_MOTOR_STATUS);
     sleep(1);
     if(argc>1) {
         if(strcmp(argv[1], "stop")==0)              { int motor_id = atoi(argv[2]); stop_motor(motor_id); }
         else if(strcmp(argv[1], "disable")==0)           { int motor_id = atoi(argv[2]); enable_motor(motor_id,false); }
         else if(strcmp(argv[1], "enable")==0)            { int motor_id = atoi(argv[2]); enable_motor(motor_id,true); }
-        else if(strcmp(argv[1], "read_pos")==0)          { int motor_id = atoi(argv[2]); printf("%d号电机 pos=%.2f\n",motor_id, mMotor[motor_id - 1].get_position());}
-        else if(strcmp(argv[1], "read_rpm")==0)          { int motor_id = atoi(argv[2]); printf("%d号电机 rpm=%d\n",motor_id, mMotor[motor_id - 1].get_rpm());}
-        else if(strcmp(argv[1], "read_ma")==0)           { int motor_id = atoi(argv[2]); printf("%d号电机 ma=%d\n",motor_id, mMotor[motor_id - 1].get_ma());}
-        
+        else if(strcmp(argv[1], "read_pos")==0)          { int motor_id = atoi(argv[2]); sleep(1); printf("%d号电机 pos=%.2f\n",motor_id, mMotor[motor_id - 1].get_position());}
+        else if(strcmp(argv[1], "read_rpm")==0)          { int motor_id = atoi(argv[2]); sleep(1); printf("%d号电机 rpm=%d\n",motor_id, mMotor[motor_id - 1].get_rpm());}
+        else if(strcmp(argv[1], "read_ma")==0)           { int motor_id = atoi(argv[2]); sleep(1); printf("%d号电机 ma=%d\n",motor_id, mMotor[motor_id - 1].get_ma());}
+        else if(strcmp(argv[1], "read")==0){
+            sleep(1);
+            for (int i = 1 ;i <= 8 ; i++){
+                std::cout<< i << "号电机 pos = "<< std::fixed << std::setprecision(2) << mMotor[i - 1].get_position() << 
+                " rpm = " << mMotor[i - 1].get_rpm() << 
+                " ma = " << mMotor[i - 1].get_ma() << std::endl;
+            }
+        }
+
+        else if(strcmp(argv[1], "read_rigi")==0){ 
+            int motor_id = atoi(argv[2]);
+            read_rigi(motor_id);
+        }
+
+        else if(strcmp(argv[1], "set_rigi")==0){ 
+            int motor_id = atoi(argv[2]);
+            int rigi = atoi(argv[3]);
+            set_rigi(motor_id, true, rigi);
+        }
+
+
         else if(strcmp(argv[1], "emm")==0){
             int motor_id = atoi(argv[2]);
             float angle = atof(argv[3]);
@@ -124,16 +144,16 @@ int main(int argc, char *argv[]){
             initmotor(atoi(argv[2]));
         }
 
-        else if(strcmp(argv[1], "screw_move")==0){
+        else if(strcmp(argv[1], "screw")==0){
             int motor_id = atoi(argv[2]);
             float distance = atof(argv[3]);
             screw_motor_move(motor_id, distance);
         }
 
-        else if(strcmp(argv[1], "emm_move")==0){
+        else if(strcmp(argv[1], "emm57")==0){
             int motor_id = atoi(argv[2]);
             float angle = atof(argv[3]);
-            emm_motor_move(motor_id, angle);
+            emm57_move(motor_id, angle);
         }
 
         else if(strcmp(argv[1], "pump")==0){
@@ -157,6 +177,10 @@ int main(int argc, char *argv[]){
             set_motor_id(motor_id, new_id);
         }
 
+        else if(strcmp(argv[1], "clear_all")==0){
+            int motor_id = atoi(argv[2]);
+            clear_all(motor_id);
+        }
         // ----------------------------------------------------------
 
         else if(strcmp(argv[1], "photolaserthread")==0){
@@ -172,13 +196,15 @@ int main(int argc, char *argv[]){
         }
 
         else if(strcmp(argv[1], "cctvthread")==0){
-            cctv();
+            int camera_id = atoi(argv[2]);
+            cctv(camera_id);
         }
 
         else if(strcmp(argv[1], "photothread")==0){
             wakeupThreadWait(THR_PHOTO_CONTROL);
         }
 
+        //----------------------------------------------
 
         else if(strcmp(argv[1], "findseam")==0){
             std::string addr = argv[2];
@@ -216,7 +242,7 @@ int main(int argc, char *argv[]){
             setLaserStatus(true); 
             wakeupThreadWait(THR_LASER_CONTROL);
             wakeupThreadWait(THR_PHOTO_CONTROL);
-            emm_motor_move(motor_id, angle);
+            emm57_move(motor_id, angle);
             // screw_motor_move(motor_id, angle);
         }
 

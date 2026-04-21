@@ -128,21 +128,23 @@ std::vector<LaserData> readLaserCSV(const std::string& filename) {
 
 
 // 监控
-int cctv(){
-    cv::VideoCapture cap(0, cv::CAP_V4L2);
+int cctv(int camera_id){
+    cv::VideoCapture cap(camera_id, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
-        std::cerr << "无法打开摄像头" << 0 << std::endl;
+        std::cerr << "无法打开摄像头" << camera_id << std::endl;
         return false;
     }
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
     cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);                     // 有的驱动 1=手动，3=自动，需测试// 2. 关闭背光补偿 (OpenCV 对应宏是 CAP_PROP_BACKLIGHT)
     cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
-    cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);      // 曝光时间整数ms(最小值50ms)
     cap.set(cv::CAP_PROP_SHARPNESS, 100);                       // 设置锐度为 100(0 ~ 100)
     cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);       // 设置亮度为 50(-64 ~ 64)
+    cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);      // 曝光时间整数ms(最小值50ms)
+    // cap.set(cv::CAP_PROP_EXPOSURE, 5000);      // 曝光时间整数ms(最小值50ms)
+    // cap.set(cv::CAP_PROP_BRIGHTNESS, 0);       // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat origin_frame;
     cv::Mat frame;
@@ -166,7 +168,7 @@ int cctv(){
 
 // 实时检测图像
 int takeVedio(){
-    cv::VideoCapture cap(0, cv::CAP_V4L2);
+    cv::VideoCapture cap(2, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
@@ -188,11 +190,17 @@ int takeVedio(){
 
     while (true) {
         cap >> origin_frame;
-        cv::undistort(origin_frame, frame, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
-        if (frame.empty()) {
+        if (origin_frame.empty()) {
             std::cerr << "无法获取图像帧。" << std::endl;
             break;
         }
+        // 确认相机参数非空再去畸变
+        if (!vConfig.MycameraMatrix.empty() && !vConfig.MydistCoeffs.empty()) {
+            cv::undistort(origin_frame, frame, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
+        } else {
+            frame = origin_frame.clone();
+        }
+        
 
         cv::Mat displayImage;
         std::vector<LaserData> data = detectLaserCenter(frame, &displayImage);
@@ -203,7 +211,7 @@ int takeVedio(){
         std::cout << "#################################################################" << std::endl;
 
         cv::imshow("Camera Video", finalMat);
-        cv::waitKey(100);
+        cv::waitKey(200);
     }
     cap.release();
     cv::destroyAllWindows();

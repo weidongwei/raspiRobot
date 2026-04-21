@@ -5,7 +5,7 @@
     "csv_path": "/home/dw/robot/image/origin_image12/csv/",
 
     "laser_duty": 0.2,                 "ldu_comment": "激光占空比",
-    "exposure_time": 2000,              "eti_comment": "相机曝光时间(ms)",
+    "exposure_time": 1300,              "eti_comment": "相机曝光时间(ms)",
     "brightness": 0,                    "bri_comment": "相机亮度(-64 ~ 64)",
 
     "photo_thread_mode": 1,             "ptm_comment": "1: 实时检测图像 2: 保存多张原始图像 3: 保存单张原始图像",

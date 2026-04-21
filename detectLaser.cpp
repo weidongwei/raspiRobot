@@ -264,7 +264,7 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, st
     for (const auto& lc : lcs) {
         for (size_t i = 0; i < lc.xs.size(); ++i) {
             int x = lc.xs[i], y = lc.ys[i];
-            double dis = (lc.laser_type == 1) ? y_pixel_to_distance1(y) : y_pixel_to_distance2(y);
+            double dis = y_pixel_to_distance(y, lc.laser_type + 1);
             if (dis <= 0) continue;
 
             outData.push_back({lc.laser_type, x, y, dis});

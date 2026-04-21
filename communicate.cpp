@@ -185,6 +185,12 @@ void handle_can_receive() {
                     process_read_ma(response, motorID);
                 }else if(response.can_dlc == 8 && cmd == 0x42){ //电机驱动参数
                     process_read_motor_parameter_x(response, motorID);
+                }else if(response.can_dlc == 6 && cmd == 0x23){ //电机刚性系数
+                    uint32_t rigi = (response.data[1] << 24) |(response.data[2] << 16) |(response.data[3] << 8) | response.data[4];
+                    uint8_t checksum = response.data[5];
+                    if (checksum == FIXED_CHECKSUM) {
+                        std::cout << motorID << "号电机 刚性系数:" << rigi << std::endl;
+                    }
                 }
             }
         }
@@ -680,6 +686,25 @@ int set_zero_parameter(int addr, int acceleration, int timeout , int dangerRpm, 
     return 0;
 }
 
+// 修改电机刚性系数
+int set_rigi(int addr, bool save, int rigi){
+canid_t base_id = get_base_id(addr);
+    uint8_t dlc = 8;
+    uint8_t save_val = static_cast<uint8_t>(save ? 0x01 : 0x00);
+    uint8_t data[] = {
+        0x4B,                               // 命令
+        0x57,                               // 命令
+        save_val,                           // 是否存储：0x01 表示保存
+        static_cast<uint8_t>((rigi >> 24) & 0xFF),     // 刚性系数
+        static_cast<uint8_t>((rigi >> 16) & 0xFF),     
+        static_cast<uint8_t>((rigi >> 8) & 0xFF),      
+        static_cast<uint8_t>(rigi & 0xFF),
+        FIXED_CHECKSUM                      // 校验
+    };
+    send_packet(base_id, dlc, data);
+    return 0;
+}
+
 //--------------------------------------------读取参数命令--------------------------------------------
 // 读取电机实时转速
 int read_rpm(int addr){
@@ -727,6 +752,18 @@ int read_motor_parameter_x(int addr){
         FIXED_CHECKSUM                      // 校验
     };
 
+    send_packet(base_id, dlc, data);
+    return 0;
+}
+
+// 读取电机刚性系数
+int read_rigi(int addr) {
+    canid_t base_id = get_base_id(addr);
+    uint8_t dlc = 2;
+    uint8_t data[] = {
+        0x23,          // 命令
+        FIXED_CHECKSUM // 校验
+    };
     send_packet(base_id, dlc, data);
     return 0;
 }

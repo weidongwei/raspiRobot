@@ -42,11 +42,13 @@ int set_motor_parameter_x(int addr);
 int set_motor_id(int addr, int new_id);
 int set_zero(int addr, bool save);
 int set_zero_parameter(int addr, int acceleration, int timeout , int dangerRpm, int dangerMa, int dangerTime);
+int set_rigi(int addr, bool save, int rigi);
 // 读取状态命令
 int read_rpm(int addr);
 int read_position(int addr, float gear_ratio);
 int read_ma(int addr);
 int read_motor_parameter_x(int addr);
+int read_rigi(int addr);
 // 处理读取命令返回的can报文
 int process_read_rpm(can_frame response, uint8_t motorID);
 int process_read_position(can_frame response, uint8_t motorID);

@@ -101,7 +101,7 @@ bool loadVisualConfig(VisualConfig& cfg, const std::string& filename);
 std::string getTimeString();
 std::vector<LaserData> readLaserCSV(const std::string& filename);
 
-int cctv();
+int cctv(int camera_id);
 int takePic();
 int takeVedio();
 int saveVedio();
