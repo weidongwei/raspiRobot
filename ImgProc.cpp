@@ -141,10 +141,10 @@ int cctv(int camera_id){
     cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);                     // 有的驱动 1=手动，3=自动，需测试// 2. 关闭背光补偿 (OpenCV 对应宏是 CAP_PROP_BACKLIGHT)
     cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
     cap.set(cv::CAP_PROP_SHARPNESS, 100);                       // 设置锐度为 100(0 ~ 100)
-    cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);       // 设置亮度为 50(-64 ~ 64)
-    cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);      // 曝光时间整数ms(最小值50ms)
-    // cap.set(cv::CAP_PROP_EXPOSURE, 5000);      // 曝光时间整数ms(最小值50ms)
-    // cap.set(cv::CAP_PROP_BRIGHTNESS, 0);       // 设置亮度为 50(-64 ~ 64)
+    // cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);       // 设置亮度为 50(-64 ~ 64)
+    // cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);      // 曝光时间整数ms(最小值50ms)
+    cap.set(cv::CAP_PROP_EXPOSURE, 5000);      // 曝光时间整数ms(最小值50ms)
+    cap.set(cv::CAP_PROP_BRIGHTNESS, 0);       // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat origin_frame;
     cv::Mat frame;
@@ -268,7 +268,7 @@ int saveVedio(){
 int takePic(){
     std::string filename  = "origin_" + getTimeString() + ".jpg";
     std::string save_path = vConfig.origin_img_path + filename;
-    cv::VideoCapture cap(0, cv::CAP_V4L2);
+    cv::VideoCapture cap(2, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
@@ -289,10 +289,18 @@ int takePic(){
 
 
     cap >> origin_frame;
-    cv::undistort(origin_frame, frame, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
-    if (frame.empty()) {
+
+    if (origin_frame.empty()) {
         std::cerr << "无法获取图像帧。" << std::endl;
+        return 0;
     }
+    // 确认相机参数非空再去畸变
+    if (!vConfig.MycameraMatrix.empty() && !vConfig.MydistCoeffs.empty()) {
+        cv::undistort(origin_frame, frame, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
+    } else {
+        frame = origin_frame.clone();
+    }
+
     cv::waitKey(10);
     cv::imwrite(save_path, frame);
     std::cout << "图像已保存到 " << save_path << std::endl;
@@ -724,9 +732,9 @@ int detectMain(cv::Mat originImage){
 
 
 
-    // std::string filename  = getTimeString() + "_displayImage" + ".jpg";
-    // std::string save_path = vConfig.proc_path + filename;
-    // cv::imwrite(save_path, finalMat);
+    std::string filename  = getTimeString() + "_displayImage" + ".jpg";
+    std::string save_path = vConfig.proc_path + filename;
+    cv::imwrite(save_path, finalMat);
     // cv::imshow("Final Detection", finalMat);
     cv::waitKey(1);
 

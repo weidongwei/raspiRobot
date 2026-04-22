@@ -265,7 +265,7 @@ int main(int argc, char *argv[]){
         }
 
         else if(strcmp(argv[1], "ytodis")==0){
-            std::cout<< y_pixel_to_distance(250, 2) <<std::endl;
+            std::cout<< y_pixel_to_distance(242, 0) <<std::endl;
         }
 
 

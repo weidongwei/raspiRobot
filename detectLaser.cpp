@@ -125,7 +125,7 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
         return cv::contourArea(a) > cv::contourArea(b);
     });
     
-    if (best_contours.size() > 5) best_contours.resize(5);
+    if (best_contours.size() > 4) best_contours.resize(4);
     return best_contours;
 
 }
@@ -237,9 +237,11 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, st
         }
     }
 
+    //
     // std::string timeStr = getTimeString();
     // std::ofstream ofs(vConfig.csv_path + timeStr + "_points.csv");
     // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
+    //
 
     cv::Mat mask_center = cv::Mat::zeros(diff.size(), CV_8U);
 
@@ -262,9 +264,10 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, st
 
     // 提取数据并准备画中心点
     for (const auto& lc : lcs) {
+        std::cout << "lc.laser_type: " << lc.laser_type << std::endl;
         for (size_t i = 0; i < lc.xs.size(); ++i) {
             int x = lc.xs[i], y = lc.ys[i];
-            double dis = y_pixel_to_distance(y, lc.laser_type + 1);
+            double dis = y_pixel_to_distance(y, lc.laser_type - 1);
             if (dis <= 0) continue;
 
             outData.push_back({lc.laser_type, x, y, dis});
