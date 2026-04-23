@@ -143,7 +143,7 @@ int cctv(int camera_id){
     cap.set(cv::CAP_PROP_SHARPNESS, 100);                       // 设置锐度为 100(0 ~ 100)
     // cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);       // 设置亮度为 50(-64 ~ 64)
     // cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);      // 曝光时间整数ms(最小值50ms)
-    cap.set(cv::CAP_PROP_EXPOSURE, 5000);      // 曝光时间整数ms(最小值50ms)
+    cap.set(cv::CAP_PROP_EXPOSURE, 3000);      // 曝光时间整数ms(最小值50ms)
     cap.set(cv::CAP_PROP_BRIGHTNESS, 0);       // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat origin_frame;

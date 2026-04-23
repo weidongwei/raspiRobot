@@ -23,114 +23,235 @@ cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut) {
 }
 
 // 计算当前轮廓组合的得分
-double calculateScore(const std::vector<std::vector<cv::Point>>& contours) {
-    if (contours.empty()) return 0.0;
-    struct LaserMetric {
-        double length;
-        double area;
-    };
+// double calculateScore(const std::vector<std::vector<cv::Point>>& contours) {
+//     if (contours.empty()) return 0.0;
+//     struct LaserMetric {
+//         double length;
+//         double area;
+//     };
+//
+//     std::vector<LaserMetric> metrics;
+//     for (const auto& cnt : contours) {
+//         double area = cv::contourArea(cnt);
+//         if (area < 10.0) continue; 
+//         double length = cv::arcLength(cnt, false) * 0.5;
+//         metrics.push_back({length, area});
+//     }
+//
+//     if (metrics.empty()) return 0.0;
+//
+//     // 按长度排序，取前两个
+//     std::sort(metrics.begin(), metrics.end(), [](const LaserMetric& a, const LaserMetric& b){
+//         return a.length > b.length;
+//     });
+//
+//     double total_len = 0;
+//     double total_area = 0;
+//     int count = std::min((int)metrics.size(), 2); // 确保不会超过实际数量
+//     for (int i = 0; i < count; ++i) {
+//         total_len += metrics[i].length;
+//         total_area += metrics[i].area;
+//     }
+//
+//     // 长度评分
+//     double s_len = 0.0;
+//     double ideal_l = vConfig.best_laser_length;
+//     if (total_len <= ideal_l) {
+//         s_len = total_len / ideal_l;
+//     } else {
+//         s_len = std::max(0.0, 1.0 - (total_len - ideal_l) / (ideal_l/2));
+//     }
+//
+//     // 细度评分
+//     double s_thin = 0.0;
+//     double ideal_w = vConfig.best_laser_width;
+//     double ideal_a = ideal_l * ideal_w;
+//
+//     if (total_area <= ideal_a) {
+//         s_thin = total_area / ideal_a;
+//     } else {
+//         s_thin = std::max(0.0, 1.0 - (total_area - ideal_a) / (ideal_a + 1e-5));
+//     }
+//
+//     // 综合加权
+//     double final_score = (s_len * vConfig.ratio_laser_length) + (s_thin * vConfig.ratio_laser_width);
+//
+//     return final_score;
+// }
 
-    std::vector<LaserMetric> metrics;
-    for (const auto& cnt : contours) {
-        double area = cv::contourArea(cnt);
-        if (area < 10.0) continue; 
-        double length = cv::arcLength(cnt, false) * 0.5;
-        metrics.push_back({length, area});
-    }
+// 轮廓检测与过滤(阈值算法：根据轮廓评分来确定阈值)
+// std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {  
+//     double minVal, maxVal;
+//     cv::minMaxLoc(diff, &minVal, &maxVal);
+//   
+//     int start_thresh = static_cast<int>(maxVal * 0.65); 
+//     int end_thresh = vConfig.threshold_value_min;
+//     int step = vConfig.threshold_value_rate;
+//
+//     double max_total_score = -1.0;
+//     int best_thresh = start_thresh;
+//     std::vector<std::vector<cv::Point>> best_contours;
+//
+//     // 自动计算阈值
+//     for (int thresh = start_thresh; thresh >= end_thresh; thresh -= step) {
+//         cv::Mat mask;
+//         cv::threshold(diff, mask, thresh, 255, cv::THRESH_BINARY);
+//    
+//         std::vector<std::vector<cv::Point>> current_contours;
+//         cv::findContours(mask, current_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+//
+//         //
+//         // std::string filename  = getTimeString() + "_diff" + ".jpg";
+//         // std::string save_path = vConfig.diff_path + filename;
+//         // cv::imwrite(save_path, diff);
+//         //
+//
+//         // 调用新评分系统
+//         double score = calculateScore(current_contours);
+//
+//     
+//         // 记录最优解
+//         if (score > max_total_score) {
+//             max_total_score = score;
+//             best_thresh = thresh;
+//             best_contours = current_contours;
+//         }
+//     }
+//
+//     std::cout << "最佳阈值: " << best_thresh << " 综合得分: " << max_total_score << std::endl;
+//
+//     //最后的输出过滤：依然按面积保留前两个
+//     std::sort(best_contours.begin(), best_contours.end(), [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
+//         return cv::contourArea(a) > cv::contourArea(b);
+//     });
+//    
+//     if (best_contours.size() > 4) best_contours.resize(4);
+//     return best_contours;
+// }
 
-    if (metrics.empty()) return 0.0;
-    
-    // 按长度排序，取前两个
-    std::sort(metrics.begin(), metrics.end(), [](const LaserMetric& a, const LaserMetric& b){
-        return a.length > b.length;
-    });
+// 轮廓检测与过滤(百分位数阈值算法)
+// std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
+//     // ── 百分位数自适应阈值 ──────────────────────────────────────────
+//     // 将图像展平为一维，排序后取高亮前 top_percent 处的灰度值作为阈值
+//     cv::Mat flat = diff.reshape(1, 1);
+//     cv::Mat sorted;
+//     cv::sort(flat, sorted, cv::SORT_ASCENDING);
+//
+//     // top_percent 含义：只保留最亮的 (1 - top_percent) 的像素
+//     // 激光线较细时可适当调高（如 0.998），线宽较大时可调低（如 0.990）
+//     const float top_percent = 0.960f;
+//     int idx = static_cast<int>(sorted.cols * top_percent);
+//     idx = std::clamp(idx, 0, sorted.cols - 1); // 防止越界
+//     int percentile_thresh = sorted.at<uchar>(0, idx);
+//
+//     std::cout << "百分位数阈值: " << percentile_thresh << std::endl;
+//
+//     // 回退保护：若计算出的阈值低于配置下限，则使用配置下限
+//     // 避免环境过暗时阈值过低、噪声轮廓大量涌入
+//     if (percentile_thresh < vConfig.threshold_value_min) {
+//         percentile_thresh = vConfig.threshold_value_min;
+//         std::cout << "阈值过低，回退至保底阈值: " << percentile_thresh << std::endl;
+//     }
+//
+//     // ── 二值化 & 轮廓检测 ──────────────────────────────────────────
+//     cv::Mat mask;
+//     cv::threshold(diff, mask, percentile_thresh, 255, cv::THRESH_BINARY);
+//
+//     std::vector<std::vector<cv::Point>> contours;
+//     cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+//
+//     // 评分日志（便于调试，与原线性扫描结果对比）
+//     double score = calculateScore(contours);
+//     std::cout << "综合得分: " << score << std::endl;
+//
+//     // ── 按面积降序，保留前4个轮廓 ──────────────────────────────────
+//     std::sort(contours.begin(), contours.end(),
+//               [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
+//                   return cv::contourArea(a) > cv::contourArea(b);
+//               });
+//
+//     if (contours.size() > 4) contours.resize(4);
+//     return contours;
+// }
 
-    double total_len = 0;
-    double total_area = 0;
-    int count = std::min((int)metrics.size(), 2); // 确保不会超过实际数量
-    for (int i = 0; i < count; ++i) {
-        total_len += metrics[i].length;
-        total_area += metrics[i].area;
-    }
+// 轮廓检测与过滤(Otsu阈值算法)
+// std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
+//     // Otsu 自动计算最优阈值（无需手动设置 start/end/step）
+//     cv::Mat mask;
+//     double otsu_thresh = cv::threshold(diff, mask, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
 
-    // 长度评分
-    double s_len = 0.0;
-    double ideal_l = vConfig.best_laser_length;
-    if (total_len <= ideal_l) {
-        s_len = total_len / ideal_l;
-    } else {
-        s_len = std::max(0.0, 1.0 - (total_len - ideal_l) / (ideal_l/2));
-    }
+//     std::cout << "Otsu 自动阈值: " << otsu_thresh << std::endl;
 
-    // 细度评分
-    double s_thin = 0.0;
-    double ideal_w = vConfig.best_laser_width;
-    double ideal_a = ideal_l * ideal_w;
+//     // 轮廓检测
+//     std::vector<std::vector<cv::Point>> contours;
+//     cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-    if (total_area <= ideal_a) {
-        s_thin = total_area / ideal_a;
-    } else {
-        s_thin = std::max(0.0, 1.0 - (total_area - ideal_a) / (ideal_a + 1e-5));
-    }
-    
+//     // 按面积降序，保留前4个轮廓
+//     std::sort(contours.begin(), contours.end(),
+//               [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
+//                   return cv::contourArea(a) > cv::contourArea(b);
+//               });
 
-    // 综合加权
-    double final_score = (s_len * vConfig.ratio_laser_length) + (s_thin * vConfig.ratio_laser_width);
+//     if (contours.size() > 4) contours.resize(4);
+//     return contours;
+// }
 
-    return final_score;
-}
-
-// 轮廓检测与过滤
+// 轮廓检测与过滤(梯度Otsu阈值算法)
 std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
-    double minVal, maxVal;
-    cv::minMaxLoc(diff, &minVal, &maxVal);
-    
-    int start_thresh = static_cast<int>(maxVal * 0.65); 
-    int end_thresh = vConfig.threshold_value_min;
-    int step = vConfig.threshold_value_rate;
+    // ── Step1: Otsu 获取初始轮廓区域 ────────────────────────────────
+    cv::Mat mask_otsu;
+    double otsu_thresh = cv::threshold(diff, mask_otsu, 0, 255,
+                                       cv::THRESH_BINARY | cv::THRESH_OTSU);
+    std::cout << "Otsu 阈值: " << otsu_thresh << std::endl;
 
-    double max_total_score = -1.0;
-    int best_thresh = start_thresh;
-    std::vector<std::vector<cv::Point>> best_contours;
+    // ── Step2: 计算梯度图（Sobel） ───────────────────────────────────
+    // 激光线边缘亮暗突变剧烈 → 梯度大
+    // 光晕/橘络边缘过渡平缓 → 梯度小
+    cv::Mat grad_x, grad_y, grad;
+    cv::Sobel(diff, grad_x, CV_16S, 1, 0, 3);
+    cv::Sobel(diff, grad_y, CV_16S, 0, 1, 3);
+    cv::convertScaleAbs(grad_x, grad_x);
+    cv::convertScaleAbs(grad_y, grad_y);
+    cv::addWeighted(grad_x, 0.5, grad_y, 0.5, 0, grad); // 合并XY梯度
+    // grad 此时是 CV_8U，值越大代表边缘越强
 
-    for (int thresh = start_thresh; thresh >= end_thresh; thresh -= step) {
-        cv::Mat mask;
-        cv::threshold(diff, mask, thresh, 255, cv::THRESH_BINARY);
-        
-        std::vector<std::vector<cv::Point>> current_contours;
-        cv::findContours(mask, current_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    // ── Step3: 只在 Otsu mask 内保留梯度 ────────────────────────────
+    // Otsu区域之外的梯度直接清零，避免背景干扰
+    cv::Mat grad_masked;
+    grad.copyTo(grad_masked, mask_otsu);
 
-        //
-        // std::string filename  = getTimeString() + "_diff" + ".jpg";
-        // std::string save_path = vConfig.diff_path + filename;
-        // cv::imwrite(save_path, diff);
-        //
+    // ── Step4: 对掩膜内的梯度图做Otsu二值化，提取强梯度区域 ─────────
+    cv::Mat mask_grad;
+    double grad_thresh = cv::threshold(grad_masked, mask_grad, 0, 255,
+                                       cv::THRESH_BINARY | cv::THRESH_OTSU);
+    std::cout << "梯度 Otsu 阈值: " << grad_thresh << std::endl;
 
-        // 调用新评分系统
-        double score = calculateScore(current_contours);
+    // ── Step5: 形态学闭运算，将强梯度边缘围成的区域填充为实心轮廓 ────
+    // 梯度图只有边缘线，需要闭运算把激光线内部填满
+    // 核的高度设1，因为激光是横向线，避免纵向过度膨胀
+    cv::Mat kernel_close = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 3));
+    cv::Mat mask_filled;
+    cv::morphologyEx(mask_grad, mask_filled, cv::MORPH_CLOSE, kernel_close);
 
-        
-        // 记录最优解
-        if (score > max_total_score) {
-            max_total_score = score;
-            best_thresh = thresh;
-            best_contours = current_contours;
-        }
-    }
+    // ── Step6: 与 Otsu mask 取交集，最终mask = Otsu区域 ∩ 强梯度区域 ─
+    // 两个条件同时满足才保留：既在Otsu认为的亮区内，又有强边缘
+    cv::Mat mask_final;
+    cv::bitwise_and(mask_filled, mask_otsu, mask_final);
 
-    std::cout << "最佳阈值: " << best_thresh << " 综合得分: " << max_total_score << std::endl;
+    // ── Step7: 轮廓检测 ─────────────────────────────────────────────
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(mask_final, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-    //最后的输出过滤：依然按面积保留前两个
-    std::sort(best_contours.begin(), best_contours.end(), [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
-        return cv::contourArea(a) > cv::contourArea(b);
-    });
-    
-    if (best_contours.size() > 4) best_contours.resize(4);
-    return best_contours;
 
+    // ── Step8: 按面积降序，保留前4个 ───────────────────────────────
+    std::sort(contours.begin(), contours.end(),
+              [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
+                  return cv::contourArea(a) > cv::contourArea(b);
+              });
+
+    if (contours.size() > 4) contours.resize(4);
+    return contours;
 }
-
-
 
 // 中心线几何提取
 std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat& diff) {
