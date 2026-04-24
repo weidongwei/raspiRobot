@@ -101,6 +101,8 @@ bool loadVisualConfig(VisualConfig& cfg, const std::string& filename);
 std::string getTimeString();
 std::vector<LaserData> readLaserCSV(const std::string& filename);
 
+cv::Mat adjustHSV(const cv::Mat& inputImage, int h_delta, int s_delta, int v_delta);
+
 int cctv(int camera_id);
 int takePic();
 int takeVedio();

@@ -249,7 +249,7 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
                   return cv::contourArea(a) > cv::contourArea(b);
               });
 
-    if (contours.size() > 4) contours.resize(4);
+    if (contours.size() > 6) contours.resize(6);
     return contours;
 }
 
@@ -258,7 +258,7 @@ std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<
     std::vector<LaserContour> laser_contours;
 
     // 权重设置
-    const double weight_top = 1;
+    const double weight_top = 0;
     const double weight_center = 1.0 - weight_top;
 
     for (int i = 0; i < contours.size(); ++i) {
