@@ -254,99 +254,320 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
 }
 
 // 中心线几何提取
-std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat& diff) {
+// std::vector<LaserContour> extractCenterlinePoints(const std::vector<std::vector<cv::Point>>& contours, const cv::Mat& diff) {
+//     std::vector<LaserContour> laser_contours;
+
+//     // 权重设置
+//     const double weight_top = 0;
+//     const double weight_center = 1.0 - weight_top;
+
+//     for (int i = 0; i < contours.size(); ++i) {
+//         cv::Mat mask = cv::Mat::zeros(diff.size(), CV_8U);
+        
+//         // std::string filename  = "test.jpg";
+//         // std::string save_path = vConfig.proc_path + filename;
+//         // cv::imwrite(save_path, diff);
+        
+//         cv::drawContours(mask, contours, i, cv::Scalar(255), cv::FILLED);
+        
+//         cv::Rect box = cv::boundingRect(contours[i]);
+//         LaserContour lc;
+//         double y_sum = 0;
+
+//         for (int x = box.x; x < box.x + box.width; ++x) {
+//             int first_y = -1, last_y = -1;
+//             for (int y = box.y; y < box.y + box.height; ++y) {
+//                 if (mask.at<uchar>(y, x) > 0 && diff.at<uchar>(y, x) > 0) {
+//                     if (first_y == -1) first_y = y;
+//                     last_y = y;
+//                 }
+//             }
+//             if (first_y != -1) {
+//                 int center_y = (first_y + last_y) / 2;
+//                 // int center_y = first_y;
+                
+//                 int top_y = first_y;
+//                 int fused_y = std::round(center_y * weight_center + top_y * weight_top);
+
+//                 lc.xs.push_back(x);
+//                 lc.ys.push_back(fused_y);
+//                 y_sum += fused_y;
+//             }
+//         }
+//         if (!lc.ys.empty()) {
+//             lc.y_average = y_sum / lc.ys.size();
+//             laser_contours.push_back(lc);
+//         }
+//     }
+    
+//     // // 判定上下激光类型
+//     // if (laser_contours.size() == 2) {
+//     //     bool firstIsUpper = laser_contours[0].y_average < laser_contours[1].y_average;
+//     //     laser_contours[0].laser_type = firstIsUpper ? 1 : 2;
+//     //     laser_contours[1].laser_type = firstIsUpper ? 2 : 1;
+//     // } else if (laser_contours.size() == 1) {
+//     //     laser_contours[0].laser_type = 1; // 默认
+//     // }
+
+//     // 3. 多轮廓身份判定逻辑
+//     int num_found = laser_contours.size();
+//     std::cout<< "num_found = " << num_found <<std::endl;
+//     if (num_found >= 2) {
+//         // 由于输入 contours 是按面积降序排列的，
+//         // 因此 laser_contours[0] 和 [1] 就是最大的两个“领头羊”。
+        
+//         // 首先确定这两个领头羊谁是上（1号），谁是下（2号）
+//         int idxA = 0;
+//         int idxB = 1;
+//         if (laser_contours[idxA].y_average > laser_contours[idxB].y_average) {
+//             std::swap(idxA, idxB);
+//         }
+        
+//         // 记录基准高度
+//         double refY1 = laser_contours[idxA].y_average; // 较小的Y（靠上）
+//         double refY2 = laser_contours[idxB].y_average; // 较大的Y（靠下）
+
+//         // 为所有轮廓（包括领头羊和碎碎的小轮廓）分配编号
+//         for (int i = 0; i < num_found; ++i) {
+//             double currentY = laser_contours[i].y_average;
+//             double distTo1 = std::abs(currentY - refY1);
+//             double distTo2 = std::abs(currentY - refY2);
+
+//             if (distTo1 < distTo2) {
+//                 laser_contours[i].laser_type = 1; // 离1号近，归为1号
+//             } else {
+//                 laser_contours[i].laser_type = 2; // 离2号近，归为2号
+//             }
+//         }
+//     } 
+//     else if (num_found == 1) {
+//         // 只有一个轮廓时，无法对比，默认标为 1
+//         laser_contours[0].laser_type = 1;
+//     }
+    
+//     return laser_contours;
+// }
+
+// 灰度重心法提取中心线
+std::vector<LaserContour> extractCenterlinePoints(
+    const std::vector<std::vector<cv::Point>>& contours,
+    const cv::Mat& diff)
+{
     std::vector<LaserContour> laser_contours;
 
-    // 权重设置
-    const double weight_top = 0;
-    const double weight_center = 1.0 - weight_top;
-
-    for (int i = 0; i < contours.size(); ++i) {
+    for (int i = 0; i < (int)contours.size(); ++i) {
         cv::Mat mask = cv::Mat::zeros(diff.size(), CV_8U);
-        
-        // std::string filename  = "test.jpg";
-        // std::string save_path = vConfig.proc_path + filename;
-        // cv::imwrite(save_path, diff);
-        
         cv::drawContours(mask, contours, i, cv::Scalar(255), cv::FILLED);
-        
+
         cv::Rect box = cv::boundingRect(contours[i]);
         LaserContour lc;
         double y_sum = 0;
 
         for (int x = box.x; x < box.x + box.width; ++x) {
-            int first_y = -1, last_y = -1;
+            double weighted_y   = 0.0;
+            double total_weight = 0.0;
+
             for (int y = box.y; y < box.y + box.height; ++y) {
-                if (mask.at<uchar>(y, x) > 0 && diff.at<uchar>(y, x) > 0) {
-                    if (first_y == -1) first_y = y;
-                    last_y = y;
+                if (mask.at<uchar>(y, x) > 0) {
+                    double intensity = static_cast<double>(diff.at<uchar>(y, x));
+                    if (intensity > 0) {
+                        weighted_y   += intensity * y;
+                        total_weight += intensity;
+                    }
                 }
             }
-            if (first_y != -1) {
-                int center_y = (first_y + last_y) / 2;
-                // int center_y = first_y;
-                
-                int top_y = first_y;
-                int fused_y = std::round(center_y * weight_center + top_y * weight_top);
 
+            if (total_weight > 0.0) {
+                int centroid_y = static_cast<int>(std::round(weighted_y / total_weight));
                 lc.xs.push_back(x);
-                lc.ys.push_back(fused_y);
-                y_sum += fused_y;
+                lc.ys.push_back(centroid_y);
+                y_sum += centroid_y;
             }
         }
+
         if (!lc.ys.empty()) {
             lc.y_average = y_sum / lc.ys.size();
             laser_contours.push_back(lc);
         }
     }
-    
-    // // 判定上下激光类型
-    // if (laser_contours.size() == 2) {
-    //     bool firstIsUpper = laser_contours[0].y_average < laser_contours[1].y_average;
-    //     laser_contours[0].laser_type = firstIsUpper ? 1 : 2;
-    //     laser_contours[1].laser_type = firstIsUpper ? 2 : 1;
-    // } else if (laser_contours.size() == 1) {
-    //     laser_contours[0].laser_type = 1; // 默认
-    // }
 
-    // 3. 多轮廓身份判定逻辑
-    int num_found = laser_contours.size();
-    std::cout<< "num_found = " << num_found <<std::endl;
+    // 多轮廓身份判定（与原函数一致）
+    int num_found = (int)laser_contours.size();
+    std::cout << "num_found (gray centroid) = " << num_found << std::endl;
+
     if (num_found >= 2) {
-        // 由于输入 contours 是按面积降序排列的，
-        // 因此 laser_contours[0] 和 [1] 就是最大的两个“领头羊”。
-        
-        // 首先确定这两个领头羊谁是上（1号），谁是下（2号）
-        int idxA = 0;
-        int idxB = 1;
-        if (laser_contours[idxA].y_average > laser_contours[idxB].y_average) {
+        int idxA = 0, idxB = 1;
+        if (laser_contours[idxA].y_average > laser_contours[idxB].y_average)
             std::swap(idxA, idxB);
-        }
-        
-        // 记录基准高度
-        double refY1 = laser_contours[idxA].y_average; // 较小的Y（靠上）
-        double refY2 = laser_contours[idxB].y_average; // 较大的Y（靠下）
 
-        // 为所有轮廓（包括领头羊和碎碎的小轮廓）分配编号
+        double refY1 = laser_contours[idxA].y_average;
+        double refY2 = laser_contours[idxB].y_average;
+
         for (int i = 0; i < num_found; ++i) {
             double currentY = laser_contours[i].y_average;
-            double distTo1 = std::abs(currentY - refY1);
-            double distTo2 = std::abs(currentY - refY2);
-
-            if (distTo1 < distTo2) {
-                laser_contours[i].laser_type = 1; // 离1号近，归为1号
-            } else {
-                laser_contours[i].laser_type = 2; // 离2号近，归为2号
-            }
+            laser_contours[i].laser_type =
+                (std::abs(currentY - refY1) < std::abs(currentY - refY2)) ? 1 : 2;
         }
-    } 
-    else if (num_found == 1) {
-        // 只有一个轮廓时，无法对比，默认标为 1
+    } else if (num_found == 1) {
         laser_contours[0].laser_type = 1;
     }
-    
+
     return laser_contours;
 }
+
+// ---- 辅助：一维高斯核及其一、二阶导数 ----
+// static void buildGaussKernels(double sigma,
+//                                std::vector<double>& g,
+//                                std::vector<double>& g1,
+//                                std::vector<double>& g2)
+// {
+//     int half = static_cast<int>(std::ceil(3.0 * sigma));
+//     int size = 2 * half + 1;
+//     g .resize(size);
+//     g1.resize(size);
+//     g2.resize(size);
+
+//     double sum = 0.0;
+//     for (int i = 0; i < size; ++i) {
+//         double x  = i - half;
+//         double gx = std::exp(-x * x / (2.0 * sigma * sigma));
+//         g [i] = gx;
+//         g1[i] = -x / (sigma * sigma) * gx;
+//         g2[i] = (x * x / (sigma * sigma) - 1.0) / (sigma * sigma) * gx;
+//         sum  += gx;
+//     }
+//     for (int i = 0; i < size; ++i) {
+//         g [i] /= sum;
+//         g1[i] /= sum;
+//         g2[i] /= sum;
+//     }
+// }
+
+// // ---- 辅助：列方向一维卷积 ----
+// static double conv1D(const cv::Mat& src, int x, int cy,
+//                      const std::vector<double>& kernel, int rows)
+// {
+//     int half = (int)kernel.size() / 2;
+//     double result = 0.0;
+//     for (int k = 0; k < (int)kernel.size(); ++k) {
+//         int y = cy - half + k;
+//         y = std::max(0, std::min(rows - 1, y));   // 边界镜像夹紧
+//         result += kernel[k] * static_cast<double>(src.at<uchar>(y, x));
+//     }
+//     return result;
+// }
+
+// // Steger 法提取中心线（亚像素精度）
+// std::vector<LaserContour> extractCenterlinePoints(
+//     const std::vector<std::vector<cv::Point>>& contours,
+//     const cv::Mat& diff,
+//     double sigma = 3.0)   // ← sigma 建议设为线宽/2
+// {
+//     std::vector<LaserContour> laser_contours;
+
+//     std::vector<double> G, G1, G2;
+//     buildGaussKernels(sigma, G, G1, G2);
+//     int rows = diff.rows;
+
+//     for (int i = 0; i < (int)contours.size(); ++i) {
+//         cv::Mat mask = cv::Mat::zeros(diff.size(), CV_8U);
+//         cv::drawContours(mask, contours, i, cv::Scalar(255), cv::FILLED);
+
+//         cv::Rect box = cv::boundingRect(contours[i]);
+        
+//         // ★ 把 box 向外扩展 sigma 个像素，防止边缘卷积截断
+//         int expand = static_cast<int>(std::ceil(sigma));
+//         box.x      = std::max(0, box.x - expand);
+//         box.y      = std::max(0, box.y - expand);
+//         box.width  = std::min(diff.cols - box.x, box.width  + 2 * expand);
+//         box.height = std::min(diff.rows - box.y, box.height + 2 * expand);
+
+//         LaserContour lc;
+//         double y_sum = 0.0;
+
+//         for (int x = box.x; x < box.x + box.width; ++x) {
+
+//             // 在 mask 内找有效行范围
+//             int first_y = -1, last_y = -1;
+//             for (int y = box.y; y < box.y + box.height; ++y) {
+//                 if (mask.at<uchar>(y, x) > 0 && diff.at<uchar>(y, x) > 0) {
+//                     if (first_y == -1) first_y = y;
+//                     last_y = y;
+//                 }
+//             }
+//             if (first_y == -1) continue;
+
+//             double best_sub_y    = -1.0;
+//             double best_strength = -1.0;
+
+//             for (int y = first_y; y <= last_y; ++y) {
+//                 double Ry  = conv1D(diff, x, y, G1, rows);
+//                 double Ryy = conv1D(diff, x, y, G2, rows);
+
+//                 // ★ 修复1：亮线必须 Ryy < 0
+//                 if (Ryy >= 0) continue;
+
+//                 double offset = -Ry / Ryy;
+
+//                 // ★ 修复2：稍微放宽阈值，用 0.6 容纳边界噪声
+//                 if (std::abs(offset) > 0.6) continue;
+
+//                 double sub_y = y + offset;
+
+//                 // ★ 修复3：用平滑后的强度（G卷积）作为选优指标，而非 |Ryy|
+//                 double smoothed_intensity = conv1D(diff, x, y, G, rows);
+//                 if (smoothed_intensity > best_strength) {
+//                     best_strength = smoothed_intensity;
+//                     best_sub_y    = sub_y;
+//                 }
+//             }
+
+//             // ★ 修复4：如果 Steger 找不到极值点，回退到灰度重心法补洞
+//             if (best_sub_y < 0.0) {
+//                 double weighted_y = 0.0, total_w = 0.0;
+//                 for (int y = first_y; y <= last_y; ++y) {
+//                     double w = static_cast<double>(diff.at<uchar>(y, x));
+//                     weighted_y += w * y;
+//                     total_w    += w;
+//                 }
+//                 if (total_w > 0.0)
+//                     best_sub_y = weighted_y / total_w;
+//             }
+
+//             if (best_sub_y >= 0.0) {
+//                 lc.xs.push_back(x);
+//                 lc.ys.push_back(static_cast<int>(std::round(best_sub_y)));
+//                 y_sum += best_sub_y;
+//             }
+//         }
+
+//         if (!lc.ys.empty()) {
+//             lc.y_average = y_sum / lc.ys.size();
+//             laser_contours.push_back(lc);
+//         }
+//     }
+
+//     // 多轮廓身份判定（与原函数一致）
+//     int num_found = (int)laser_contours.size();
+//     std::cout << "num_found (steger) = " << num_found << std::endl;
+
+//     if (num_found >= 2) {
+//         int idxA = 0, idxB = 1;
+//         if (laser_contours[idxA].y_average > laser_contours[idxB].y_average)
+//             std::swap(idxA, idxB);
+//         double refY1 = laser_contours[idxA].y_average;
+//         double refY2 = laser_contours[idxB].y_average;
+//         for (int i = 0; i < num_found; ++i) {
+//             double cy = laser_contours[i].y_average;
+//             laser_contours[i].laser_type =
+//                 (std::abs(cy - refY1) < std::abs(cy - refY2)) ? 1 : 2;
+//         }
+//     } else if (num_found == 1) {
+//         laser_contours[0].laser_type = 1;
+//     }
+
+//     return laser_contours;
+// }
 
 // 保存结果与可视化
 cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData) {
