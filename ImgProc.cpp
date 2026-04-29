@@ -211,7 +211,7 @@ int takeVedio(){
         std::cout << "#################################################################" << std::endl;
 
         cv::imshow("Camera Video", finalMat);
-        cv::waitKey(200);
+        cv::waitKey(300);
     }
     cap.release();
     cv::destroyAllWindows();
@@ -732,9 +732,9 @@ int detectMain(cv::Mat originImage){
 
 
 
-    // std::string filename  = getTimeString() + "_displayImage" + ".jpg";
-    // std::string save_path = vConfig.proc_path + filename;
-    // cv::imwrite(save_path, finalMat);
+    std::string filename  = getTimeString() + "_displayImage" + ".jpg";
+    std::string save_path = vConfig.proc_path + filename;
+    cv::imwrite(save_path, finalMat);
     // cv::imshow("Final Detection", finalMat);
     cv::waitKey(1);
 

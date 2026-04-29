@@ -243,7 +243,7 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
     cv::findContours(mask_final, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
 
-    // ── Step8: 按面积降序，保留前4个 ───────────────────────────────
+    // ── Step8: 按面积降序， ───────────────────────────────
     std::sort(contours.begin(), contours.end(),
               [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
                   return cv::contourArea(a) > cv::contourArea(b);
@@ -258,7 +258,7 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
 //     std::vector<LaserContour> laser_contours;
 
 //     // 权重设置
-//     const double weight_top = 0;
+//     const double weight_top = 1;
 //     const double weight_center = 1.0 - weight_top;
 
 //     for (int i = 0; i < contours.size(); ++i) {
@@ -391,7 +391,7 @@ std::vector<LaserContour> extractCenterlinePoints(
         }
     }
 
-    // 多轮廓身份判定（与原函数一致）
+    // 多轮廓身份判定
     int num_found = (int)laser_contours.size();
     std::cout << "num_found (gray centroid) = " << num_found << std::endl;
 
@@ -415,152 +415,176 @@ std::vector<LaserContour> extractCenterlinePoints(
     return laser_contours;
 }
 
-// ---- 辅助：一维高斯核及其一、二阶导数 ----
-// static void buildGaussKernels(double sigma,
-//                                std::vector<double>& g,
-//                                std::vector<double>& g1,
-//                                std::vector<double>& g2)
-// {
-//     int half = static_cast<int>(std::ceil(3.0 * sigma));
-//     int size = 2 * half + 1;
-//     g .resize(size);
-//     g1.resize(size);
-//     g2.resize(size);
-
-//     double sum = 0.0;
-//     for (int i = 0; i < size; ++i) {
-//         double x  = i - half;
-//         double gx = std::exp(-x * x / (2.0 * sigma * sigma));
-//         g [i] = gx;
-//         g1[i] = -x / (sigma * sigma) * gx;
-//         g2[i] = (x * x / (sigma * sigma) - 1.0) / (sigma * sigma) * gx;
-//         sum  += gx;
-//     }
-//     for (int i = 0; i < size; ++i) {
-//         g [i] /= sum;
-//         g1[i] /= sum;
-//         g2[i] /= sum;
-//     }
-// }
-
-// // ---- 辅助：列方向一维卷积 ----
-// static double conv1D(const cv::Mat& src, int x, int cy,
-//                      const std::vector<double>& kernel, int rows)
-// {
-//     int half = (int)kernel.size() / 2;
-//     double result = 0.0;
-//     for (int k = 0; k < (int)kernel.size(); ++k) {
-//         int y = cy - half + k;
-//         y = std::max(0, std::min(rows - 1, y));   // 边界镜像夹紧
-//         result += kernel[k] * static_cast<double>(src.at<uchar>(y, x));
-//     }
-//     return result;
-// }
-
-// // Steger 法提取中心线（亚像素精度）
+/**
+ * @brief Steger 算法提取激光中心线（亚像素精度）
+ *
+ * 原理：
+ *  1. 对图像做高斯平滑，计算一阶/二阶偏导数；
+ *  2. 对每个像素构建 Hessian 矩阵，取绝对值最大的特征值对应的特征向量
+ *     作为"垂直于光条"的方向 (nx, ny)；
+ *  3. 在该方向上用泰勒展开求一阶导为零的亚像素偏移 t；
+ *  4. |t| <= 0.5 时，该像素是中心线上的点，亚像素坐标为
+ *     (x + t*nx, y + t*ny)。
+ *
+ * @param contours  轮廓列表（来自 findContours）
+ * @param diff      差分灰度图（CV_8U）
+ * @param sigma     高斯平滑 sigma（建议与光条宽度匹配，通常 1.0~2.0）
+ * @return          与 extractCenterlinePoints 格式相同的 LaserContour 列表
+ */
 // std::vector<LaserContour> extractCenterlinePoints(
 //     const std::vector<std::vector<cv::Point>>& contours,
-//     const cv::Mat& diff,
-//     double sigma = 3.0)   // ← sigma 建议设为线宽/2
+//     const cv::Mat& diff)
 // {
+//     double sigma = 1.5;
+//     // ------------------------------------------------------------------ //
+//     //  Step 1: 对整图做高斯平滑并计算偏导数（float 精度）
+//     // ------------------------------------------------------------------ //
+//     cv::Mat src;
+//     diff.convertTo(src, CV_32F);
+
+//     // 高斯核半径（取 3*sigma，保证截断误差足够小）
+//     int ksize = static_cast<int>(std::ceil(3.0 * sigma)) * 2 + 1;
+
+//     cv::Mat smooth;
+//     cv::GaussianBlur(src, smooth, cv::Size(ksize, ksize), sigma, sigma,
+//                      cv::BORDER_REFLECT);
+
+//     // 一阶导数
+//     cv::Mat Ix, Iy;
+//     cv::Sobel(smooth, Ix, CV_32F, 1, 0, 3, 1.0 / 8.0, 0, cv::BORDER_REFLECT);
+//     cv::Sobel(smooth, Iy, CV_32F, 0, 1, 3, 1.0 / 8.0, 0, cv::BORDER_REFLECT);
+
+//     // 二阶导数
+//     cv::Mat Ixx, Ixy, Iyy;
+//     cv::Sobel(smooth, Ixx, CV_32F, 2, 0, 3, 1.0 / 8.0, 0, cv::BORDER_REFLECT);
+//     cv::Sobel(smooth, Iyy, CV_32F, 0, 2, 3, 1.0 / 8.0, 0, cv::BORDER_REFLECT);
+//     cv::Sobel(smooth, Ixy, CV_32F, 1, 1, 3, 1.0 / 8.0, 0, cv::BORDER_REFLECT);
+
+//     // ------------------------------------------------------------------ //
+//     //  Step 2: 逐轮廓提取中心线
+//     // ------------------------------------------------------------------ //
 //     std::vector<LaserContour> laser_contours;
 
-//     std::vector<double> G, G1, G2;
-//     buildGaussKernels(sigma, G, G1, G2);
-//     int rows = diff.rows;
+//     for (int ci = 0; ci < (int)contours.size(); ++ci) {
 
-//     for (int i = 0; i < (int)contours.size(); ++i) {
 //         cv::Mat mask = cv::Mat::zeros(diff.size(), CV_8U);
-//         cv::drawContours(mask, contours, i, cv::Scalar(255), cv::FILLED);
+//         cv::drawContours(mask, contours, ci, cv::Scalar(255), cv::FILLED);
 
-//         cv::Rect box = cv::boundingRect(contours[i]);
-        
-//         // ★ 把 box 向外扩展 sigma 个像素，防止边缘卷积截断
-//         int expand = static_cast<int>(std::ceil(sigma));
-//         box.x      = std::max(0, box.x - expand);
-//         box.y      = std::max(0, box.y - expand);
-//         box.width  = std::min(diff.cols - box.x, box.width  + 2 * expand);
-//         box.height = std::min(diff.rows - box.y, box.height + 2 * expand);
+//         cv::Rect box = cv::boundingRect(contours[ci]);
+//         // 稍微扩展边界，避免导数计算越界
+//         box.x      = std::max(box.x - 1, 1);
+//         box.y      = std::max(box.y - 1, 1);
+//         box.width  = std::min(box.width  + 2, diff.cols - box.x - 1);
+//         box.height = std::min(box.height + 2, diff.rows - box.y - 1);
 
 //         LaserContour lc;
 //         double y_sum = 0.0;
 
+//         // 按列扫描，每列只保留响应最强的一个中心点（与灰度重心法保持一致）
 //         for (int x = box.x; x < box.x + box.width; ++x) {
 
-//             // 在 mask 内找有效行范围
-//             int first_y = -1, last_y = -1;
+//             double  best_sub_x = 0, best_sub_y = 0;
+//             double  best_resp  = -1.0;   // 用最大特征值绝对值作为响应强度
+//             bool    found      = false;
+
 //             for (int y = box.y; y < box.y + box.height; ++y) {
-//                 if (mask.at<uchar>(y, x) > 0 && diff.at<uchar>(y, x) > 0) {
-//                     if (first_y == -1) first_y = y;
-//                     last_y = y;
+//                 if (mask.at<uchar>(y, x) == 0) continue;
+
+//                 // ---------- Hessian 矩阵 ----------
+//                 //  H = | ixx  ixy |
+//                 //      | ixy  iyy |
+//                 float ixx = Ixx.at<float>(y, x);
+//                 float ixy = Ixy.at<float>(y, x);
+//                 float iyy = Iyy.at<float>(y, x);
+
+//                 // 特征值（解析公式）
+//                 float trace = ixx + iyy;
+//                 float disc  = std::sqrt(std::max(0.f,
+//                               (ixx - iyy) * (ixx - iyy) + 4.f * ixy * ixy));
+//                 float lam1  = 0.5f * (trace + disc);   // |lam1| >= |lam2|
+//                 float lam2  = 0.5f * (trace - disc);
+
+//                 // 选绝对值较大的特征值
+//                 float lam = (std::abs(lam1) >= std::abs(lam2)) ? lam1 : lam2;
+
+//                 // 光条应表现为"脊"，特征值为负（暗背景亮光条取负）
+//                 // 如需检测暗线，改为 lam > 0
+//                 if (lam >= 0.f) continue;
+
+//                 // 对应特征向量 (nx, ny)：垂直于光条走向
+//                 float nx, ny;
+//                 if (std::abs(ixy) < 1e-6f) {
+//                     nx = (std::abs(ixx) >= std::abs(iyy)) ? 1.f : 0.f;
+//                     ny = 1.f - nx;
+//                 } else {
+//                     // H * v = lam * v  =>  nx 方向
+//                     nx = lam - iyy;
+//                     ny = ixy;
+//                     float norm = std::sqrt(nx * nx + ny * ny);
+//                     if (norm < 1e-6f) continue;
+//                     nx /= norm;
+//                     ny /= norm;
+//                 }
+
+//                 // ---------- 泰勒展开求亚像素偏移 ----------
+//                 //  f'(t) = (Ix*nx + Iy*ny) + t*(Ixx*nx*nx + 2*Ixy*nx*ny + Iyy*ny*ny) = 0
+//                 float ix  = Ix.at<float>(y, x);
+//                 float iy  = Iy.at<float>(y, x);
+//                 float denom = ixx * nx * nx + 2.f * ixy * nx * ny + iyy * ny * ny;
+
+//                 if (std::abs(denom) < 1e-6f) continue;
+
+//                 float t = -(ix * nx + iy * ny) / denom;
+
+//                 // 偏移在 ±0.5 像素内才认为是中心线
+//                 if (std::abs(t) > 0.5f) continue;
+
+//                 // 以特征值绝对值为响应，同列取最强
+//                 float resp = std::abs(lam);
+//                 if (resp > best_resp) {
+//                     best_resp  = resp;
+//                     best_sub_x = x + t * nx;
+//                     best_sub_y = y + t * ny;
+//                     found      = true;
 //                 }
 //             }
-//             if (first_y == -1) continue;
 
-//             double best_sub_y    = -1.0;
-//             double best_strength = -1.0;
-
-//             for (int y = first_y; y <= last_y; ++y) {
-//                 double Ry  = conv1D(diff, x, y, G1, rows);
-//                 double Ryy = conv1D(diff, x, y, G2, rows);
-
-//                 // ★ 修复1：亮线必须 Ryy < 0
-//                 if (Ryy >= 0) continue;
-
-//                 double offset = -Ry / Ryy;
-
-//                 // ★ 修复2：稍微放宽阈值，用 0.6 容纳边界噪声
-//                 if (std::abs(offset) > 0.6) continue;
-
-//                 double sub_y = y + offset;
-
-//                 // ★ 修复3：用平滑后的强度（G卷积）作为选优指标，而非 |Ryy|
-//                 double smoothed_intensity = conv1D(diff, x, y, G, rows);
-//                 if (smoothed_intensity > best_strength) {
-//                     best_strength = smoothed_intensity;
-//                     best_sub_y    = sub_y;
-//                 }
-//             }
-
-//             // ★ 修复4：如果 Steger 找不到极值点，回退到灰度重心法补洞
-//             if (best_sub_y < 0.0) {
-//                 double weighted_y = 0.0, total_w = 0.0;
-//                 for (int y = first_y; y <= last_y; ++y) {
-//                     double w = static_cast<double>(diff.at<uchar>(y, x));
-//                     weighted_y += w * y;
-//                     total_w    += w;
-//                 }
-//                 if (total_w > 0.0)
-//                     best_sub_y = weighted_y / total_w;
-//             }
-
-//             if (best_sub_y >= 0.0) {
-//                 lc.xs.push_back(x);
+//             if (found) {
+//                 // 存储亚像素坐标（如 LaserContour 只接受 int，则 round 后存储）
+//                 lc.xs.push_back(static_cast<int>(std::round(best_sub_x)));
 //                 lc.ys.push_back(static_cast<int>(std::round(best_sub_y)));
 //                 y_sum += best_sub_y;
+
+//                 // --- 若 LaserContour 支持亚像素浮点坐标，可额外存储 ---
+//                 // lc.sub_xs.push_back(best_sub_x);
+//                 // lc.sub_ys.push_back(best_sub_y);
 //             }
 //         }
 
 //         if (!lc.ys.empty()) {
-//             lc.y_average = y_sum / lc.ys.size();
+//             lc.y_average = y_sum / static_cast<double>(lc.ys.size());
 //             laser_contours.push_back(lc);
 //         }
 //     }
 
-//     // 多轮廓身份判定（与原函数一致）
+//     // ------------------------------------------------------------------ //
+//     //  Step 3: 多轮廓身份判定（与灰度重心法完全相同）
+//     // ------------------------------------------------------------------ //
 //     int num_found = (int)laser_contours.size();
-//     std::cout << "num_found (steger) = " << num_found << std::endl;
+//     std::cout << "num_found (Steger) = " << num_found << std::endl;
 
 //     if (num_found >= 2) {
 //         int idxA = 0, idxB = 1;
 //         if (laser_contours[idxA].y_average > laser_contours[idxB].y_average)
 //             std::swap(idxA, idxB);
+
 //         double refY1 = laser_contours[idxA].y_average;
 //         double refY2 = laser_contours[idxB].y_average;
+
 //         for (int i = 0; i < num_found; ++i) {
-//             double cy = laser_contours[i].y_average;
+//             double currentY = laser_contours[i].y_average;
 //             laser_contours[i].laser_type =
-//                 (std::abs(cy - refY1) < std::abs(cy - refY2)) ? 1 : 2;
+//                 (std::abs(currentY - refY1) < std::abs(currentY - refY2)) ? 1 : 2;
 //         }
 //     } else if (num_found == 1) {
 //         laser_contours[0].laser_type = 1;
