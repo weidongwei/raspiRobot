@@ -138,13 +138,13 @@ int cctv(int camera_id){
     }
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
-    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);                     // 有的驱动 1=手动，3=自动，需测试// 2. 关闭背光补偿 (OpenCV 对应宏是 CAP_PROP_BACKLIGHT)
-    cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
-    cap.set(cv::CAP_PROP_SHARPNESS, 100);                       // 设置锐度为 100(0 ~ 100)
+    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 3);                     // 有的驱动 1=手动，3=自动，需测试// 2. 关闭背光补偿 (OpenCV 对应宏是 CAP_PROP_BACKLIGHT)
+    // cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
+    // cap.set(cv::CAP_PROP_SHARPNESS, 100);                       // 设置锐度为 100(0 ~ 100)
     // cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);       // 设置亮度为 50(-64 ~ 64)
     // cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);      // 曝光时间整数ms(最小值50ms)
-    cap.set(cv::CAP_PROP_EXPOSURE, 3000);      // 曝光时间整数ms(最小值50ms)
-    cap.set(cv::CAP_PROP_BRIGHTNESS, 0);       // 设置亮度为 50(-64 ~ 64)
+    // cap.set(cv::CAP_PROP_EXPOSURE, 3000);      // 曝光时间整数ms(最小值50ms)
+    // cap.set(cv::CAP_PROP_BRIGHTNESS, 0);       // 设置亮度为 50(-64 ~ 64)
 
     cv::Mat origin_frame;
     cv::Mat frame;
@@ -168,7 +168,7 @@ int cctv(int camera_id){
 
 // 实时检测图像
 int takeVedio(){
-    cv::VideoCapture cap(2, cv::CAP_V4L2);
+    cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
@@ -268,7 +268,7 @@ int saveVedio(){
 int takePic(){
     std::string filename  = "origin_" + getTimeString() + ".jpg";
     std::string save_path = vConfig.origin_img_path + filename;
-    cv::VideoCapture cap(2, cv::CAP_V4L2);
+    cv::VideoCapture cap(0, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
@@ -555,41 +555,6 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
         }
     }
 
-    // // --- 新增：激光断裂处检测 (检测跳变) ---
-    // for (int i = 1; i < n; ++i) {
-    //     // 只有同一条激光线内的相邻点才计算跳变
-    //     if (smoothedData[i].laser_id == smoothedData[i-1].laser_id) {
-    //         int dx = std::abs(smoothedData[i].x_pixel - smoothedData[i-1].x_pixel);
-    //         int dy = std::abs(smoothedData[i].y_pixel - smoothedData[i-1].y_pixel);
-
-    //         // 如果跳变超过阈值 (10像素)
-    //         if (dx > 10 || dy > 10) {
-    //             SeamResult gapSeam;
-    //             gapSeam.id = smoothedData[i].laser_id;
-    //             // 取中点作为橘缝坐标
-    //             gapSeam.x_peak = (smoothedData[i].x_pixel + smoothedData[i-1].x_pixel) / 2;
-    //             gapSeam.dist = (smoothedData[i].distance_cm + smoothedData[i-1].distance_cm) / 2.0;
-                
-    //             // 模拟坡脚和宽度（由于是断裂，给一个理想化的评分参数）
-    //             gapSeam.left_foot = smoothedData[i-1].x_pixel;
-    //             gapSeam.right_foot = smoothedData[i].x_pixel;
-    //             gapSeam.width = dx;
-    //             gapSeam.depth = vConfig.best_depth; // 断裂处默认深度很大
-                
-    //             // 给断裂处一个极高的初始评分，因为它通常是最明显的特征
-    //             gapSeam.score = 1.0 * vConfig.ratio_width + 1.0 * vConfig.ratio_depth;
-
-    //             // 同样进行区域过滤
-    //             if(gapSeam.x_peak > 50 && gapSeam.x_peak < 600) {
-    //                 groupResults[gapSeam.id].push_back(gapSeam);
-    //                 std::cout << "[断裂检测] 发现跳变橘缝: id=" << gapSeam.id 
-    //                           << ", x=" << gapSeam.x_peak << " (Gap dx:" << dx << " dy:" << dy << ")" << std::endl;
-    //             }
-    //         }
-    //     }
-    // }
-
-
     // 找到最像橘缝的凹陷组合
     std::vector<MatchedSeamPair> tempMatchedPairs;
     std::vector<MatchedSeamPair> finalMatchedPairs;
@@ -724,17 +689,17 @@ int detectMain(cv::Mat originImage){
     std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
     std::vector<LaserData> smoothData = smooth(data);
     std::vector<MatchedSeamPair> results = findSeam(smoothData);
-    std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
-    cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
+    // std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
+    // cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
 
-    // cv::Mat finalMat = drawSeam(displayImage, results, data);
-
-
+    cv::Mat finalMat = drawSeam(displayImage, results, data);
 
 
-    std::string filename  = getTimeString() + "_displayImage" + ".jpg";
-    std::string save_path = vConfig.proc_path + filename;
-    cv::imwrite(save_path, finalMat);
+
+
+    // std::string filename  = getTimeString() + "_displayImage" + ".jpg";
+    // std::string save_path = vConfig.proc_path + filename;
+    // cv::imwrite(save_path, finalMat);
     // cv::imshow("Final Detection", finalMat);
     cv::waitKey(1);
 

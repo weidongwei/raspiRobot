@@ -22,6 +22,8 @@ cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut) {
     return diff;
 }
 
+
+
 // 计算当前轮廓组合的得分
 // double calculateScore(const std::vector<std::vector<cv::Point>>& contours) {
 //     if (contours.empty()) return 0.0;
@@ -349,6 +351,73 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
 // }
 
 // 灰度重心法提取中心线
+// std::vector<LaserContour> extractCenterlinePoints(
+//     const std::vector<std::vector<cv::Point>>& contours,
+//     const cv::Mat& diff)
+// {
+//     std::vector<LaserContour> laser_contours;
+
+//     for (int i = 0; i < (int)contours.size(); ++i) {
+//         cv::Mat mask = cv::Mat::zeros(diff.size(), CV_8U);
+//         cv::drawContours(mask, contours, i, cv::Scalar(255), cv::FILLED);
+
+//         cv::Rect box = cv::boundingRect(contours[i]);
+//         LaserContour lc;
+//         double y_sum = 0;
+
+//         for (int x = box.x; x < box.x + box.width; ++x) {
+//             double weighted_y   = 0.0;
+//             double total_weight = 0.0;
+
+//             for (int y = box.y; y < box.y + box.height; ++y) {
+//                 if (mask.at<uchar>(y, x) > 0) {
+//                     double intensity = static_cast<double>(diff.at<uchar>(y, x));
+//                     if (intensity > 0) {
+//                         weighted_y   += intensity * y;
+//                         total_weight += intensity;
+//                     }
+//                 }
+//             }
+
+//             if (total_weight > 0.0) {
+//                 int centroid_y = static_cast<int>(std::round(weighted_y / total_weight));
+//                 lc.xs.push_back(x);
+//                 lc.ys.push_back(centroid_y);
+//                 y_sum += centroid_y;
+//             }
+//         }
+
+//         if (!lc.ys.empty()) {
+//             lc.y_average = y_sum / lc.ys.size();
+//             laser_contours.push_back(lc);
+//         }
+//     }
+
+//     // 多轮廓身份判定
+//     int num_found = (int)laser_contours.size();
+//     std::cout << "num_found (gray centroid) = " << num_found << std::endl;
+
+//     if (num_found >= 2) {
+//         int idxA = 0, idxB = 1;
+//         if (laser_contours[idxA].y_average > laser_contours[idxB].y_average)
+//             std::swap(idxA, idxB);
+
+//         double refY1 = laser_contours[idxA].y_average;
+//         double refY2 = laser_contours[idxB].y_average;
+
+//         for (int i = 0; i < num_found; ++i) {
+//             double currentY = laser_contours[i].y_average;
+//             laser_contours[i].laser_type =
+//                 (std::abs(currentY - refY1) < std::abs(currentY - refY2)) ? 1 : 2;
+//         }
+//     } else if (num_found == 1) {
+//         laser_contours[0].laser_type = 1;
+//     }
+
+//     return laser_contours;
+// }
+
+// 改进版灰度重心法提取中心线
 std::vector<LaserContour> extractCenterlinePoints(
     const std::vector<std::vector<cv::Point>>& contours,
     const cv::Mat& diff)
@@ -364,15 +433,26 @@ std::vector<LaserContour> extractCenterlinePoints(
         double y_sum = 0;
 
         for (int x = box.x; x < box.x + box.width; ++x) {
-            double weighted_y   = 0.0;
+            double weighted_y = 0.0;
             double total_weight = 0.0;
+            double max_intensity = 0.0;
+
+            for (int y = box.y; y < box.y + box.height; ++y) {
+                if (mask.at<uchar>(y, x) > 0) {
+                    max_intensity = std::max(max_intensity, static_cast<double>(diff.at<uchar>(y, x)));
+                }
+            }
+
+            double weight_cap = std::max(1.0, max_intensity * 0.85);
 
             for (int y = box.y; y < box.y + box.height; ++y) {
                 if (mask.at<uchar>(y, x) > 0) {
                     double intensity = static_cast<double>(diff.at<uchar>(y, x));
                     if (intensity > 0) {
-                        weighted_y   += intensity * y;
-                        total_weight += intensity;
+                        double clipped = std::min(intensity, weight_cap);
+                        double weight = std::sqrt(clipped);
+                        weighted_y += weight * y;
+                        total_weight += weight;
                     }
                 }
             }
@@ -386,6 +466,39 @@ std::vector<LaserContour> extractCenterlinePoints(
         }
 
         if (!lc.ys.empty()) {
+            int window = 5;
+            int radius = window / 2;
+            int max_jump = 2;
+            std::vector<int> filtered = lc.ys;
+
+            for (int j = 0; j < (int)lc.ys.size(); ++j) {
+                int begin = std::max(0, j - radius);
+                int end = std::min((int)lc.ys.size() - 1, j + radius);
+                std::vector<int> local;
+                for (int k = begin; k <= end; ++k) {
+                    local.push_back(lc.ys[k]);
+                }
+
+                size_t mid = local.size() / 2;
+                std::nth_element(local.begin(), local.begin() + mid, local.end());
+                int median_y = local[mid];
+                if (std::abs(lc.ys[j] - median_y) > max_jump) {
+                    filtered[j] = median_y;
+                }
+            }
+
+            if (filtered.size() >= 3) {
+                std::vector<int> smoothed = filtered;
+                for (int j = 1; j < (int)filtered.size() - 1; ++j) {
+                    smoothed[j] = static_cast<int>(std::round(
+                        0.25 * filtered[j - 1] + 0.5 * filtered[j] + 0.25 * filtered[j + 1]));
+                }
+                filtered = smoothed;
+            }
+
+            lc.ys = filtered;
+            y_sum = 0;
+            for (int y : lc.ys) y_sum += y;
             lc.y_average = y_sum / lc.ys.size();
             laser_contours.push_back(lc);
         }
@@ -393,7 +506,7 @@ std::vector<LaserContour> extractCenterlinePoints(
 
     // 多轮廓身份判定
     int num_found = (int)laser_contours.size();
-    std::cout << "num_found (gray centroid) = " << num_found << std::endl;
+    std::cout << "num_found (gray centroid improved) = " << num_found << std::endl;
 
     if (num_found >= 2) {
         int idxA = 0, idxB = 1;
@@ -592,6 +705,9 @@ std::vector<LaserContour> extractCenterlinePoints(
 
 //     return laser_contours;
 // }
+
+
+
 
 // 保存结果与可视化
 cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData) {
