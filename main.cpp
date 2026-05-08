@@ -208,7 +208,10 @@ int main(int argc, char *argv[]){
 
         else if(strcmp(argv[1], "findseam")==0){
             std::string addr = argv[2];
-            detectMain(cv::imread(addr));
+            cv::Mat finalMat = detectMain(cv::imread(addr));
+            std::string filename  = getTimeString() + "_displayImage" + ".jpg";
+            std::string save_path = vConfig.proc_path + filename;
+            cv::imwrite(save_path, finalMat);
         }
 
         else if(strcmp(argv[1], "findseambatch")==0){

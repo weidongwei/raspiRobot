@@ -706,7 +706,363 @@ std::vector<LaserContour> extractCenterlinePoints(
 //     return laser_contours;
 // }
 
+// 方案A：中心线提取后修复。先找每个laser_type的最长主线，再吸收同y附近的小片段。
+std::vector<LaserContour> repairLaserLines(const std::vector<LaserContour>& lcs) {
+    const int maxGap = 80;           // 相邻中心点缺口超过该宽度(px)则不插值补线
+    const int supportPoints = 10;     // 补线时左右各取多少个点拟合趋势线
+    const int attachGap = 80;        // 小片段距离主线端点超过该x距离(px)则不归并
+    const double yAttachGate = 100;   // 小片段端点与主线端点的最大y差(px)
+    const double yGateBase = 80;    // 左右趋势线在缺口中点允许的基础最大y差(px)
+    const double yGateRatio = 1;  // 实际y门限随缺口宽度放宽：max(yGateBase, gap * yGateRatio)
 
+
+    struct PointXY {
+        int x;
+        int y;
+    };
+
+    struct LinePiece {
+        const LaserContour* lc;
+        int xMin;
+        int xMax;
+        PointXY leftPoint;
+        PointXY rightPoint;
+        double yAvg;
+        int length;
+    };
+
+    auto fitLineY = [](const std::vector<PointXY>& points, double x) -> double {
+        if (points.empty()) return 0.0;
+        if (points.size() == 1) return points[0].y;
+
+        double sumX = 0.0;
+        double sumY = 0.0;
+        double sumXX = 0.0;
+        double sumXY = 0.0;
+        for (const auto& p : points) {
+            sumX += p.x;
+            sumY += p.y;
+            sumXX += static_cast<double>(p.x) * p.x;
+            sumXY += static_cast<double>(p.x) * p.y;
+        }
+
+        double n = static_cast<double>(points.size());
+        double denom = n * sumXX - sumX * sumX;
+        if (std::abs(denom) < 1e-6) return sumY / n;
+
+        double slope = (n * sumXY - sumX * sumY) / denom;
+        double intercept = (sumY - slope * sumX) / n;
+        return slope * x + intercept;
+    };
+
+    auto appendUniqueByX = [](std::vector<PointXY>& dst, const LaserContour& lc) {
+        for (size_t i = 0; i < lc.xs.size() && i < lc.ys.size(); ++i) {
+            dst.push_back({lc.xs[i], lc.ys[i]});
+        }
+    };
+
+    auto sortAndAverageByX = [](std::vector<PointXY> points) {
+        std::sort(points.begin(), points.end(), [](const PointXY& a, const PointXY& b) {
+            if (a.x != b.x) return a.x < b.x;
+            return a.y < b.y;
+        });
+
+        std::vector<PointXY> uniquePoints;
+        for (size_t i = 0; i < points.size();) {
+            int x = points[i].x;
+            double ySum = 0.0;
+            int count = 0;
+            while (i < points.size() && points[i].x == x) {
+                ySum += points[i].y;
+                count++;
+                ++i;
+            }
+            uniquePoints.push_back({x, static_cast<int>(std::round(ySum / count))});
+        }
+        return uniquePoints;
+    };
+
+    auto fillGaps = [&](const std::vector<PointXY>& uniquePoints) {
+        std::vector<PointXY> repairedPoints;
+        for (int i = 0; i < (int)uniquePoints.size(); ++i) {
+            repairedPoints.push_back(uniquePoints[i]);
+            if (i + 1 >= (int)uniquePoints.size()) continue;
+
+            const PointXY& left = uniquePoints[i];
+            const PointXY& right = uniquePoints[i + 1];
+            int gap = right.x - left.x - 1;
+            if (gap <= 0 || gap > maxGap) continue;
+
+            std::vector<PointXY> leftSupport;
+            std::vector<PointXY> rightSupport;
+            double leftYAtMid = left.y;
+            double rightYAtMid = right.y;
+            double midX = (left.x + right.x) * 0.5;
+
+            for (int j = i; j >= 0 && (int)leftSupport.size() < supportPoints; --j) {
+                leftSupport.push_back(uniquePoints[j]);
+            }
+            std::reverse(leftSupport.begin(), leftSupport.end());
+
+            for (int j = i + 1; j < (int)uniquePoints.size() && (int)rightSupport.size() < supportPoints; ++j) {
+                rightSupport.push_back(uniquePoints[j]);
+            }
+
+            leftYAtMid = fitLineY(leftSupport, midX);
+            rightYAtMid = fitLineY(rightSupport, midX);
+
+            double yGate = std::max(yGateBase, gap * yGateRatio);
+            if (std::abs(leftYAtMid - rightYAtMid) > yGate) continue;
+
+            for (int x = left.x + 1; x < right.x; ++x) {
+                double t = static_cast<double>(x - left.x) / (right.x - left.x);
+                double yFromLeft = fitLineY(leftSupport, x);
+                double yFromRight = fitLineY(rightSupport, x);
+                double y = yFromLeft * (1.0 - t) + yFromRight * t;
+                repairedPoints.push_back({x, static_cast<int>(std::round(y))});
+            }
+        }
+
+        std::sort(repairedPoints.begin(), repairedPoints.end(), [](const PointXY& a, const PointXY& b) {
+            return a.x < b.x;
+        });
+        return repairedPoints;
+    };
+
+    std::vector<LinePiece> pieces;
+    for (const auto& lc : lcs) {
+        if (lc.xs.empty() || lc.ys.empty()) continue;
+
+        int leftIdx = 0;
+        int rightIdx = 0;
+        for (int i = 1; i < (int)lc.xs.size() && i < (int)lc.ys.size(); ++i) {
+            if (lc.xs[i] < lc.xs[leftIdx]) leftIdx = i;
+            if (lc.xs[i] > lc.xs[rightIdx]) rightIdx = i;
+        }
+
+        pieces.push_back({
+            &lc,
+            lc.xs[leftIdx],
+            lc.xs[rightIdx],
+            {lc.xs[leftIdx], lc.ys[leftIdx]},
+            {lc.xs[rightIdx], lc.ys[rightIdx]},
+            lc.y_average,
+            static_cast<int>(std::min(lc.xs.size(), lc.ys.size()))
+        });
+    }
+
+    if (pieces.size() < 2) return lcs;
+
+    std::sort(pieces.begin(), pieces.end(), [](const LinePiece& a, const LinePiece& b) {
+        if (a.length != b.length) return a.length > b.length;
+        return (a.xMax - a.xMin) > (b.xMax - b.xMin);
+    });
+
+    LinePiece mainA = pieces[0];
+    LinePiece mainB = pieces[1];
+    if (mainA.yAvg > mainB.yAvg) std::swap(mainA, mainB);
+
+    struct MainLine {
+        LinePiece main;
+        int laserType;
+        int xMin;
+        int xMax;
+        PointXY leftPoint;
+        PointXY rightPoint;
+        std::vector<PointXY> mergedPoints;
+    };
+
+    MainLine upper{mainA, 1, mainA.xMin, mainA.xMax, mainA.leftPoint, mainA.rightPoint, {}};
+    MainLine lower{mainB, 2, mainB.xMin, mainB.xMax, mainB.leftPoint, mainB.rightPoint, {}};
+    appendUniqueByX(upper.mergedPoints, *mainA.lc);
+    appendUniqueByX(lower.mergedPoints, *mainB.lc);
+
+    auto isMainPiece = [&](const LinePiece& piece) {
+        return piece.lc == mainA.lc || piece.lc == mainB.lc;
+    };
+
+    auto tryAttach = [&](MainLine& line, const LinePiece& piece) {
+        bool isLeftSide = piece.xMax < line.xMin;
+        bool isRightSide = piece.xMin > line.xMax;
+        if (!isLeftSide && !isRightSide) return false;
+
+        int xGap = isLeftSide
+            ? line.xMin - piece.xMax - 1
+            : piece.xMin - line.xMax - 1;
+        if (xGap < 0 || xGap > attachGap) return false;
+
+        double yDist = isLeftSide
+            ? std::abs(piece.rightPoint.y - line.leftPoint.y)
+            : std::abs(piece.leftPoint.y - line.rightPoint.y);
+        if (yDist > yAttachGate) return false;
+
+        appendUniqueByX(line.mergedPoints, *piece.lc);
+        if (isLeftSide) {
+            line.xMin = piece.xMin;
+            line.leftPoint = piece.leftPoint;
+        } else {
+            line.xMax = piece.xMax;
+            line.rightPoint = piece.rightPoint;
+        }
+        return true;
+    };
+
+    for (size_t i = 2; i < pieces.size(); ++i) {
+        const LinePiece& piece = pieces[i];
+        if (isMainPiece(piece)) continue;
+
+        bool upperLeft = piece.xMax < upper.xMin;
+        bool upperRight = piece.xMin > upper.xMax;
+        bool lowerLeft = piece.xMax < lower.xMin;
+        bool lowerRight = piece.xMin > lower.xMax;
+
+        double upperDist = 1e9;
+        if (upperLeft) upperDist = std::abs(piece.rightPoint.y - upper.leftPoint.y);
+        if (upperRight) upperDist = std::abs(piece.leftPoint.y - upper.rightPoint.y);
+
+        double lowerDist = 1e9;
+        if (lowerLeft) lowerDist = std::abs(piece.rightPoint.y - lower.leftPoint.y);
+        if (lowerRight) lowerDist = std::abs(piece.leftPoint.y - lower.rightPoint.y);
+
+        if (upperDist <= lowerDist) {
+            if (!tryAttach(upper, piece)) tryAttach(lower, piece);
+        } else {
+            if (!tryAttach(lower, piece)) tryAttach(upper, piece);
+        }
+    }
+
+    std::vector<LaserContour> repaired;
+    auto buildContour = [&](const MainLine& line) {
+        std::vector<PointXY> repairedPoints = fillGaps(sortAndAverageByX(line.mergedPoints));
+        LaserContour repairedLc;
+        repairedLc.laser_type = line.laserType;
+        double ySum = 0.0;
+        for (const auto& p : repairedPoints) {
+            repairedLc.xs.push_back(p.x);
+            repairedLc.ys.push_back(p.y);
+            ySum += p.y;
+        }
+
+        if (!repairedLc.ys.empty()) {
+            repairedLc.y_average = ySum / repairedLc.ys.size();
+            repaired.push_back(repairedLc);
+        }
+    };
+
+    buildContour(upper);
+    buildContour(lower);
+
+    return repaired;
+}
+
+
+// 方案B：轮廓阶段先修复。把靠近上/下主轮廓的小轮廓合并后，再重新提取中心线。
+// std::vector<std::vector<cv::Point>> repairLaserLines(const std::vector<std::vector<cv::Point>>& contours) {
+//     const int maxContourAttachGap = 100;       // 小轮廓距离主轮廓端点超过该x距离(px)则不合并
+//     const int bridgeKernelWidth = 100;         // 横向闭运算核宽度，控制断裂轮廓桥接能力
+//     const double yAttachGate = 100;          // 小轮廓中心y与主轮廓中心y允许的最大差值(px)
+//     const double minMainScoreAreaWeight = 0.15; // 主轮廓评分中面积权重：score = box.width + area * weight
+
+
+//     struct ContourInfo {
+//         int idx;
+//         cv::Rect box;
+//         double area;
+//         double centerY;
+//         double score;
+//     };
+
+//     if (contours.size() < 2) return contours;
+
+//     std::vector<ContourInfo> infos;
+//     int maxX = 0;
+//     int maxY = 0;
+//     for (int i = 0; i < (int)contours.size(); ++i) {
+//         if (contours[i].empty()) continue;
+//         cv::Rect box = cv::boundingRect(contours[i]);
+//         double area = std::max(1.0, cv::contourArea(contours[i]));
+//         double score = box.width + area * minMainScoreAreaWeight;
+//         infos.push_back({i, box, area, box.y + box.height * 0.5, score});
+//         maxX = std::max(maxX, box.x + box.width + bridgeKernelWidth + 2);
+//         maxY = std::max(maxY, box.y + box.height + 4);
+//     }
+//     if (infos.size() < 2 || maxX <= 0 || maxY <= 0) return contours;
+
+//     std::sort(infos.begin(), infos.end(), [](const ContourInfo& a, const ContourInfo& b) {
+//         return a.score > b.score;
+//     });
+
+//     ContourInfo mainA = infos[0];
+//     ContourInfo mainB = infos[1];
+//     if (mainA.centerY > mainB.centerY) std::swap(mainA, mainB);
+
+//     struct GroupState {
+//         ContourInfo main;
+//         cv::Rect range;
+//         std::vector<int> indices;
+//     };
+
+//     GroupState top{mainA, mainA.box, {mainA.idx}};
+//     GroupState bottom{mainB, mainB.box, {mainB.idx}};
+
+//     auto xGapToRange = [](const cv::Rect& box, const cv::Rect& range) {
+//         int rangeRight = range.x + range.width - 1;
+//         int boxRight = box.x + box.width - 1;
+//         if (boxRight < range.x) return range.x - boxRight - 1;
+//         if (box.x > rangeRight) return box.x - rangeRight - 1;
+//         return 0;
+//     };
+
+//     auto addToGroup = [](GroupState& group, const ContourInfo& info) {
+//         group.indices.push_back(info.idx);
+//         group.range |= info.box;
+//     };
+
+//     for (const auto& info : infos) {
+//         if (info.idx == mainA.idx || info.idx == mainB.idx) continue;
+
+//         double topYDist = std::abs(info.centerY - top.main.centerY);
+//         double bottomYDist = std::abs(info.centerY - bottom.main.centerY);
+//         GroupState* target = topYDist <= bottomYDist ? &top : &bottom;
+//         double yDist = std::min(topYDist, bottomYDist);
+//         int xGap = xGapToRange(info.box, target->range);
+
+//         if (yDist <= yAttachGate && xGap <= maxContourAttachGap) {
+//             addToGroup(*target, info);
+//         }
+//     }
+
+//     auto buildMergedContour = [&](const GroupState& group) {
+//         cv::Mat mask = cv::Mat::zeros(maxY, maxX, CV_8U);
+//         for (int idx : group.indices) {
+//             cv::drawContours(mask, contours, idx, cv::Scalar(255), cv::FILLED);
+//         }
+
+//         cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(bridgeKernelWidth, 3));
+//         cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel);
+
+//         std::vector<std::vector<cv::Point>> mergedContours;
+//         cv::findContours(mask, mergedContours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+//         if (mergedContours.empty()) return contours[group.main.idx];
+
+//         return *std::max_element(
+//             mergedContours.begin(),
+//             mergedContours.end(),
+//             [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
+//                 return cv::contourArea(a) < cv::contourArea(b);
+//             });
+//     };
+
+//     std::vector<std::vector<cv::Point>> repairedContours;
+//     repairedContours.push_back(buildMergedContour(top));
+//     repairedContours.push_back(buildMergedContour(bottom));
+
+//     std::sort(repairedContours.begin(), repairedContours.end(), [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
+//         return cv::boundingRect(a).y < cv::boundingRect(b).y;
+//     });
+
+//     return repairedContours;
+// }
 
 
 // 保存结果与可视化
@@ -785,10 +1141,13 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
     if (contours.empty()) return {};
 
     // 3. 提取中心线坐标
+    // 方案B：先把小轮廓合并到上下两条主轮廓
+    // auto repairedContours = repairLaserLines(contours);
     auto lcs = extractCenterlinePoints(contours, diff);
+    auto repairedLcs = repairLaserLines(lcs);
 
     // 4. 保存与可视化
-    cv::Mat canvas = saveAndVisualize(contours, lcs, undistortedImg, diff, laserPoints);
+    cv::Mat canvas = saveAndVisualize(contours, repairedLcs, undistortedImg, diff, laserPoints);
     
     *imageOut = canvas;
 

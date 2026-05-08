@@ -201,14 +201,15 @@ int takeVedio(){
             frame = origin_frame.clone();
         }
         
+        cv::Mat finalMat = detectMain(frame);
 
-        cv::Mat displayImage;
-        std::vector<LaserData> data = detectLaserCenter(frame, &displayImage);
-        std::vector<LaserData> smoothData = smooth(data);
-        std::vector<MatchedSeamPair> results = findSeam(smoothData);
-        std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
-        cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
-        std::cout << "#################################################################" << std::endl;
+        // cv::Mat displayImage;
+        // std::vector<LaserData> data = detectLaserCenter(frame, &displayImage);
+        // std::vector<LaserData> smoothData = smooth(data);
+        // std::vector<MatchedSeamPair> results = findSeam(smoothData);
+        // std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
+        // cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
+        // std::cout << "#################################################################" << std::endl;
 
         cv::imshow("Camera Video", finalMat);
         cv::waitKey(300);
@@ -217,53 +218,7 @@ int takeVedio(){
     cv::destroyAllWindows();
     return 0;
 }
-// 保存多张原始图像
-int saveVedio(){
-    cv::VideoCapture cap(2, cv::CAP_V4L2);
-    // cv::VideoCapture cap;
-    // cap.open(0, cv::CAP_V4L2);
-    if (!cap.isOpened()) {
-        std::cerr << "无法打开摄像头" << 2 << std::endl;
-        return false;
-    }
-    cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
-    cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
-    cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1);  // 有的驱动 1=手动，3=自动，需测试
-    cap.set(cv::CAP_PROP_BACKLIGHT, 0);                         // 关闭背光补偿
-    cap.set(cv::CAP_PROP_EXPOSURE, vConfig.exposure_time);     // 曝光时间整数us
-    cap.set(cv::CAP_PROP_SHARPNESS, 100);  // 设置锐度为 100(0 ~ 100)
-    cap.set(cv::CAP_PROP_BRIGHTNESS, vConfig.brightness);  // 设置亮度为 50(-64 ~ 64)
 
-    cv::Mat origin_frame;
-    cv::Mat frame;
-    cv::waitKey(1000);
-
-
-    while (true) {
-        cap >> origin_frame;
-        cv::undistort(origin_frame, frame, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
-        if (frame.empty()) {
-            std::cerr << "无法获取图像帧。" << std::endl;
-            break;
-        }
-
-
-        std::string filename  = "origin_" + getTimeString() + ".jpg";
-        std::string save_path = vConfig.origin_img_path + filename;
-        // cv::imshow("Camera Video", frame);
-        cv::waitKey(10);
-        cv::imwrite(save_path, frame); 
-        std::cout << "图像已保存到 " << save_path << std::endl;
-        cv::imshow("Camera Video", frame);
-        cv::waitKey(1000);
-        // sleep(1);
-        // detect_laser_edge(cv::imread("/home/dw/robot/image/1.jpg"));
-        // detect_laser_center(cv::imread("/home/dw/robot/image/1.jpg"));
-    }
-    cap.release();
-    cv::destroyAllWindows();
-    return 0;
-}
 // 保存单张原始图像
 int takePic(){
     std::string filename  = "origin_" + getTimeString() + ".jpg";
@@ -386,27 +341,132 @@ std::vector<LaserData> smooth(const std::vector<LaserData> data) {
     // ofs << "laser_id,x_pixel,y_pixel,distance_cm\n";
 
     std::vector<LaserData> smoothedData;
-    int n = data.size();
+    std::map<int, std::vector<LaserData>> grouped;
+    for (const auto& row : data) {
+        grouped[row.laser_id].push_back(row);
+    }
 
-    // 中间部分使用滑动窗口卷积
-    for (int i = 0; i < n; ++i) {
-        double sum = 0;
-        int count = 0;
-        for (int j = i - 5; j <= i + 5; ++j) {
-            if (j >= 0 && j < n) {
-                sum += data[j].distance_cm;
-                count++;
+    for (auto& item : grouped) {
+        auto& rows = item.second;
+        std::sort(rows.begin(), rows.end(), [](const LaserData& a, const LaserData& b) {
+            return a.x_pixel < b.x_pixel;
+        });
+
+        int n = rows.size();
+        for (int i = 0; i < n; ++i) {
+            double sum = 0.0;
+            int count = 0;
+
+            for (int j = i - 5; j <= i + 5; ++j) {
+                if (j >= 0 && j < n) {
+                    sum += rows[j].distance_cm;
+                    count++;
+                }
             }
+
+            LaserData row = rows[i];
+            row.distance_cm = sum / std::max(1, count);
+            smoothedData.push_back(row);
+            // ofs << row.laser_id << "," << row.x_pixel << "," << row.y_pixel << "," << row.distance_cm << "\n";
         }
-        double val = sum / count;
-        LaserData row = data[i];
-        row.distance_cm = val;
-        smoothedData.push_back(row);
-        // ofs << data[i].laser_id << "," << data[i].x_pixel << "," << data[i].y_pixel << "," << val << "\n";
     }
     std::cout << "data size: " << data.size() << ", smoothed size: " << smoothedData.size() << std::endl;
     return smoothedData;
 }
+
+//*********************************************** */
+//*********************************************** */
+//*********************************************** */
+static double getQuantile(std::vector<double> values, double quantile) {
+    if (values.empty()) return 0.0;
+    if (quantile < 0.0) quantile = 0.0;
+    if (quantile > 1.0) quantile = 1.0;
+
+    std::sort(values.begin(), values.end());
+    double pos = quantile * (values.size() - 1);
+    int left = static_cast<int>(pos);
+    int right = std::min(left + 1, static_cast<int>(values.size()) - 1);
+    double ratio = pos - left;
+    return values[left] * (1.0 - ratio) + values[right] * ratio;
+}
+
+// 获取两条激光的果面基线距离。baseline_distance 是每个点附近窗口内的低分位数距离曲线。
+std::vector<LaserBaselineData> getLaserBaselineDistance(const std::vector<LaserData>& data, int halfWindowPixel, double quantile) {
+    std::vector<LaserBaselineData> baselineData;
+    std::map<int, std::vector<LaserData>> grouped;
+    for (const auto& row : data) {
+        grouped[row.laser_id].push_back(row);
+    }
+
+    for (auto& item : grouped) {
+        auto& rows = item.second;
+        std::sort(rows.begin(), rows.end(), [](const LaserData& a, const LaserData& b) {
+            return a.x_pixel < b.x_pixel;
+        });
+
+        for (const auto& row : rows) {
+            std::vector<double> windowDistances;
+            for (const auto& neighbor : rows) {
+                if (std::abs(neighbor.x_pixel - row.x_pixel) <= halfWindowPixel) {
+                    windowDistances.push_back(neighbor.distance_cm);
+                }
+            }
+
+            LaserBaselineData out;
+            out.laser_id = row.laser_id;
+            out.x_pixel = row.x_pixel;
+            out.y_pixel = row.y_pixel;
+            out.distance_cm = row.distance_cm;
+            out.baseline_distance = getQuantile(windowDistances, quantile);
+            out.seam_signal = out.distance_cm - out.baseline_distance;
+            baselineData.push_back(out);
+        }
+    }
+
+    return baselineData;
+}
+
+// SeamSignal数据替换原来的distance
+std::vector<LaserData> buildSeamSignalData(const std::vector<LaserBaselineData>& data) {
+    std::vector<LaserData> signalData;
+    signalData.reserve(data.size());
+
+    for (const auto& row : data) {
+        LaserData out;
+        out.laser_id = row.laser_id;
+        out.x_pixel = row.x_pixel;
+        out.y_pixel = row.y_pixel;
+        out.distance_cm = row.seam_signal;
+        signalData.push_back(out);
+    }
+
+    return signalData;
+}
+
+bool saveLaserBaselineCSV(const std::vector<LaserBaselineData>& data, const std::string& filename) {
+    std::ofstream ofs(filename);
+    if (!ofs.is_open()) {
+        std::cerr << "Error: Could not open baseline csv " << filename << std::endl;
+        return false;
+    }
+
+    ofs << "laser_id,x_pixel,y_pixel,distance_cm,baseline_distance,seam_signal\n";
+    ofs << std::fixed << std::setprecision(4);
+    for (const auto& row : data) {
+        ofs << row.laser_id << ","
+            << row.x_pixel << ","
+            << row.y_pixel << ","
+            << row.distance_cm << ","
+            << row.baseline_distance << ","
+            << row.seam_signal << "\n";
+    }
+
+    std::cout << "baseline csv 保存完成: " << filename << std::endl;
+    return true;
+}
+//*********************************************** */
+//*********************************************** */
+//*********************************************** */
 
 // 峰值竞争(峰值索引, 激光数据)
 std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::vector<LaserData>& data) {
@@ -684,26 +744,24 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> result
 }
 
 // 检测主函数
-int detectMain(cv::Mat originImage){
+cv::Mat detectMain(cv::Mat originImage){
     cv::Mat displayImage;
     std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
     std::vector<LaserData> smoothData = smooth(data);
-    std::vector<MatchedSeamPair> results = findSeam(smoothData);
-    // std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
-    // cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
 
-    cv::Mat finalMat = drawSeam(displayImage, results, data);
+    std::vector<LaserBaselineData> baselineData = getLaserBaselineDistance(smoothData, 80, 0.25);
+    // saveLaserBaselineCSV(baselineData, vConfig.csv_path + getTimeString() + "_points_baseline.csv");
+    std::vector<LaserData> seamSignalData = buildSeamSignalData(baselineData);
 
+    std::vector<MatchedSeamPair> results = findSeam(seamSignalData);
+    std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
+    cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
 
+    // cv::Mat finalMat = drawSeam(displayImage, results, data);
 
-
-    // std::string filename  = getTimeString() + "_displayImage" + ".jpg";
-    // std::string save_path = vConfig.proc_path + filename;
-    // cv::imwrite(save_path, finalMat);
-    // cv::imshow("Final Detection", finalMat);
     cv::waitKey(1);
 
-    return 0;
+    return finalMat;
 }
 
 

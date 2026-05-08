@@ -78,6 +78,16 @@ struct LaserData {
     double distance_cm;
 };
 
+// 激光基线调试数据
+struct LaserBaselineData {
+    int laser_id;
+    int x_pixel;
+    int y_pixel;
+    double distance_cm;
+    double baseline_distance;
+    double seam_signal;
+};
+
 // 凹陷结果结构体
 struct SeamResult {
     int id;             // 激光器ID
@@ -106,7 +116,6 @@ cv::Mat adjustHSV(const cv::Mat& inputImage, int h_delta, int s_delta, int v_del
 int cctv(int camera_id);
 int takePic();
 int takeVedio();
-int saveVedio();
 int userImgProc0(cv::Mat *theMat, long beginTime, long afterTime);
 int userImgProc1(cv::Mat *theMat, long beginTime, long afterTime);
 
@@ -120,12 +129,17 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut);
 
 
 std::vector<LaserData> smooth(const std::vector<LaserData> data);
+
+std::vector<LaserBaselineData> getLaserBaselineDistance(const std::vector<LaserData>& data, int halfWindowPixel = 40, double quantile = 0.25);
+bool saveLaserBaselineCSV(const std::vector<LaserBaselineData>& data, const std::string& filename);
+std::vector<LaserData> buildSeamSignalData(const std::vector<LaserBaselineData>& data);
+
 SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx);
 std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::vector<LaserData>& data);
 std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData);
 cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data);
 
-int detectMain(cv::Mat originImage);
+cv::Mat detectMain(cv::Mat originImage);
 
 
 

@@ -178,8 +178,6 @@ void *photoControlThreadFunc(void* arg){
             if(vConfig.photo_thread_mode == 1)
                 takeVedio();
             else if(vConfig.photo_thread_mode == 2)
-                saveVedio();
-            else if(vConfig.photo_thread_mode == 3)
                 takePic();
         }
         hungupTheThread(id);
