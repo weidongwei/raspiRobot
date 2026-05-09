@@ -376,7 +376,7 @@ std::vector<LaserData> smooth(const std::vector<LaserData> data) {
 
 //*********************************************** */
 //*********************************************** */
-//*********************************************** */
+//*********************************************** */改进橘缝检测
 static double getQuantile(std::vector<double> values, double quantile) {
     if (values.empty()) return 0.0;
     if (quantile < 0.0) quantile = 0.0;
@@ -696,13 +696,314 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
     return finalMatchedPairs;
 }
 
-// 画出橘缝线
-cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data) {
-    if (results.size() < 1) return displayImage;
-    int id = 1;
-    for(int i=0; i<results.size(); i++){
+//*********************************************** */
+//*********************************************** */
+//*********************************************** */
+static int clampInt(int value, int minValue, int maxValue) {
+    if (value < minValue) return minValue;
+    if (value > maxValue) return maxValue;
+    return value;
+}
 
-        double ratio = (results.size() > 1) ? (double)i / (results.size() - 1) : 0.0;
+static cv::Mat normalizeToFloat01(const cv::Mat& src) {
+    cv::Mat srcFloat;
+    src.convertTo(srcFloat, CV_32F);
+
+    double minVal = 0.0;
+    double maxVal = 0.0;
+    cv::minMaxLoc(srcFloat, &minVal, &maxVal);
+    if (maxVal - minVal < 1e-5) {
+        return cv::Mat::zeros(src.size(), CV_32F);
+    }
+
+    cv::Mat dst;
+    cv::subtract(srcFloat, cv::Scalar(minVal), dst);
+    dst.convertTo(dst, CV_32F, 1.0 / (maxVal - minVal));
+    return dst;
+}
+
+static bool findNearestLaserEndpoint(const std::vector<LaserData>& laserData, int laserId, int targetX, const cv::Size& imageSize, cv::Point& endpoint) {
+    bool found = false;
+    int bestGap = std::numeric_limits<int>::max();
+    int bestY = -1;
+
+    for (const auto& row : laserData) {
+        if (row.laser_id != laserId) continue;
+
+        int gap = std::abs(row.x_pixel - targetX);
+        if (gap < bestGap) {
+            bestGap = gap;
+            bestY = row.y_pixel;
+            found = true;
+        }
+    }
+
+    if (!found || imageSize.width <= 0 || imageSize.height <= 0) return false;
+
+    // SeamTracker 会平移 x_peak，平移后不一定刚好存在同 x 的激光点。
+    // 这里用“最近 x 的激光点”取 y，但保留追踪后的 targetX，让曲线端点跟随稳定轨迹。
+    endpoint.x = clampInt(targetX, 0, imageSize.width - 1);
+    endpoint.y = clampInt(bestY, 0, imageSize.height - 1);
+    return true;
+}
+
+static std::vector<cv::Point> buildLinePath(cv::Point p1, cv::Point p2, const cv::Size& imageSize) {
+    std::vector<cv::Point> path;
+    int steps = std::max(std::abs(p2.x - p1.x), std::abs(p2.y - p1.y));
+    steps = std::max(steps, 1);
+    path.reserve(steps + 1);
+
+    for (int i = 0; i <= steps; ++i) {
+        double t = static_cast<double>(i) / steps;
+        int x = static_cast<int>(std::round(p1.x * (1.0 - t) + p2.x * t));
+        int y = static_cast<int>(std::round(p1.y * (1.0 - t) + p2.y * t));
+        path.push_back(cv::Point(
+            clampInt(x, 0, imageSize.width - 1),
+            clampInt(y, 0, imageSize.height - 1)
+        ));
+    }
+
+    return path;
+}
+
+static std::vector<cv::Point> smoothCurvePath(const std::vector<cv::Point>& path, int radius, const cv::Size& imageSize) {
+    if (path.size() < 3 || radius <= 0) return path;
+
+    std::vector<cv::Point> smoothed = path;
+    for (int i = 1; i < static_cast<int>(path.size()) - 1; ++i) {
+        int left = std::max(0, i - radius);
+        int right = std::min(static_cast<int>(path.size()) - 1, i + radius);
+        double sumX = 0.0;
+        int count = 0;
+
+        for (int j = left; j <= right; ++j) {
+            sumX += path[j].x;
+            count++;
+        }
+
+        // 路径是逐行动态规划出来的，y 代表扫描行，平滑时只平滑 x，避免曲线行序被打乱。
+        smoothed[i].x = clampInt(static_cast<int>(std::round(sumX / std::max(1, count))), 0, imageSize.width - 1);
+        smoothed[i].y = path[i].y;
+    }
+
+    // 首尾是两条激光实际找到的橘缝端点，必须固定，不能被平滑移动。
+    smoothed.front() = path.front();
+    smoothed.back() = path.back();
+    return smoothed;
+}
+
+static cv::Mat buildSeamCostMap(const cv::Mat& roiImage) {
+    if (roiImage.empty()) return {};
+
+    cv::Mat bgr;
+    cv::Mat gray;
+    if (roiImage.channels() == 4) {
+        cv::cvtColor(roiImage, bgr, cv::COLOR_BGRA2BGR);
+        cv::cvtColor(roiImage, gray, cv::COLOR_BGRA2GRAY);
+    } else if (roiImage.channels() == 3) {
+        bgr = roiImage;
+        cv::cvtColor(roiImage, gray, cv::COLOR_BGR2GRAY);
+    } else {
+        gray = roiImage.clone();
+        cv::cvtColor(gray, bgr, cv::COLOR_GRAY2BGR);
+    }
+
+    cv::Mat smoothGray;
+    cv::GaussianBlur(gray, smoothGray, cv::Size(5, 5), 0);
+
+    int minSide = std::max(3, std::min(roiImage.cols, roiImage.rows));
+    int kernelSize = std::min(17, minSide);
+    if (kernelSize % 2 == 0) kernelSize--;
+    kernelSize = std::max(3, kernelSize);
+    cv::Mat blackhatKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernelSize, kernelSize));
+    cv::Mat blackhat;
+    cv::morphologyEx(smoothGray, blackhat, cv::MORPH_BLACKHAT, blackhatKernel);
+
+    cv::Mat gradX, gradY, gradMag;
+    cv::Sobel(smoothGray, gradX, CV_32F, 1, 0, 3);
+    cv::Sobel(smoothGray, gradY, CV_32F, 0, 1, 3);
+    cv::magnitude(gradX, gradY, gradMag);
+    cv::Mat absGradX;
+    cv::convertScaleAbs(gradX, absGradX);
+
+    std::vector<cv::Mat> channels;
+    cv::split(bgr, channels);
+    cv::Mat bFloat, gFloat, rFloat;
+    channels[0].convertTo(bFloat, CV_32F);
+    channels[1].convertTo(gFloat, CV_32F);
+    channels[2].convertTo(rFloat, CV_32F);
+    cv::Mat greenRaw = gFloat - 0.5 * (bFloat + rFloat);
+    cv::threshold(greenRaw, greenRaw, 0.0, 0.0, cv::THRESH_TOZERO);
+
+    cv::Mat hsv;
+    cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
+    std::vector<cv::Mat> hsvChannels;
+    cv::split(hsv, hsvChannels);
+
+    cv::Mat blackhatEvidence = normalizeToFloat01(blackhat);
+    cv::Mat grayFloat = normalizeToFloat01(smoothGray);
+    cv::Mat ones = cv::Mat::ones(grayFloat.size(), CV_32F);
+    cv::Mat darkEvidence = ones - grayFloat;
+    cv::Mat gradEvidence = normalizeToFloat01(gradMag);
+    cv::Mat verticalEdgeEvidence = normalizeToFloat01(absGradX);
+    cv::Mat brightEvidence = normalizeToFloat01(hsvChannels[2]);
+    cv::Mat lowSaturationEvidence = ones - normalizeToFloat01(hsvChannels[1]);
+    cv::Mat brightPithEvidence = brightEvidence.mul(lowSaturationEvidence);
+    cv::Mat greenPenalty = normalizeToFloat01(greenRaw);
+
+    // 代价图的含义：越像橘缝，代价越低；越不像橘缝，代价越高。
+    // 橘缝既可能是暗凹槽，也可能是白色/浅黄色橘络，所以这里同时保留两类证据。
+    cv::Mat darkGrooveEvidence = 0.65 * blackhatEvidence + 0.35 * darkEvidence;
+    // 白色橘络通常表现为“亮度高 + 饱和度低”，和橘皮橙色高饱和纹理区分开。
+    cv::Mat pithLineEvidence = 0.75 * brightPithEvidence + 0.25 * verticalEdgeEvidence;
+    // 竖向边界梯度比全方向梯度更偏向分瓣线，弱化横向激光边缘的影响。
+    cv::Mat seamEvidence = 0.35 * darkGrooveEvidence
+                          + 0.45 * pithLineEvidence
+                          + 0.20 * verticalEdgeEvidence;
+
+    // 绿色激光是测量工具，不是橘缝本体。这里提高绿色高亮区域的代价，避免路径沿激光横线走。
+    cv::Mat cost = ones - seamEvidence + 0.75 * greenPenalty;
+    cv::GaussianBlur(cost, cost, cv::Size(3, 3), 0);
+    return cost;
+}
+
+static bool traceSingleSeamCurve(const cv::Mat& originImage, cv::Point p1, cv::Point p2, std::vector<cv::Point>& curvePoints, double& meanCost) {
+    if (originImage.empty()) return false;
+
+    cv::Point start = p1;
+    cv::Point end = p2;
+    if (start.y > end.y) {
+        std::swap(start, end);
+    }
+
+    const int MIN_VERTICAL_SPAN = 8;
+    const int ROI_X_MARGIN = 70;
+    const int ROI_Y_MARGIN = 8;
+    const int MAX_X_STEP_PER_ROW = 6;
+    const double TRANSITION_WEIGHT = 0.03;
+    const double SHAPE_PRIOR_WEIGHT = 0.18;
+
+    if (std::abs(end.y - start.y) < MIN_VERTICAL_SPAN) return false;
+
+    int x0 = clampInt(std::min(start.x, end.x) - ROI_X_MARGIN, 0, originImage.cols - 1);
+    int x1 = clampInt(std::max(start.x, end.x) + ROI_X_MARGIN, 0, originImage.cols - 1);
+    int y0 = clampInt(std::min(start.y, end.y) - ROI_Y_MARGIN, 0, originImage.rows - 1);
+    int y1 = clampInt(std::max(start.y, end.y) + ROI_Y_MARGIN, 0, originImage.rows - 1);
+    if (x1 <= x0 || y1 <= y0) return false;
+
+    cv::Rect roiRect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+    cv::Mat costMap = buildSeamCostMap(originImage(roiRect));
+    if (costMap.empty()) return false;
+
+    cv::Point localStart(start.x - roiRect.x, start.y - roiRect.y);
+    cv::Point localEnd(end.x - roiRect.x, end.y - roiRect.y);
+    localStart.x = clampInt(localStart.x, 0, costMap.cols - 1);
+    localEnd.x = clampInt(localEnd.x, 0, costMap.cols - 1);
+    localStart.y = clampInt(localStart.y, 0, costMap.rows - 1);
+    localEnd.y = clampInt(localEnd.y, 0, costMap.rows - 1);
+
+    const double INF = std::numeric_limits<double>::max() / 4.0;
+    std::vector<double> prevDp(costMap.cols, INF);
+    std::vector<double> currDp(costMap.cols, INF);
+    cv::Mat parent(costMap.rows, costMap.cols, CV_16S, cv::Scalar(-1));
+
+    prevDp[localStart.x] = costMap.at<float>(localStart.y, localStart.x);
+
+    // 动态规划：从上端点逐行走到下端点。
+    // 每下一行只允许 x 移动 MAX_X_STEP_PER_ROW，防止路径突然跳到无关暗纹。
+    // 两点本身不能确定曲线，这里的“图像代价 + 平滑约束”提供了中间曲线的证据。
+    for (int y = localStart.y + 1; y <= localEnd.y; ++y) {
+        std::fill(currDp.begin(), currDp.end(), INF);
+        double t = static_cast<double>(y - localStart.y) / std::max(1, localEnd.y - localStart.y);
+        double lineX = localStart.x * (1.0 - t) + localEnd.x * t;
+
+        for (int x = 0; x < costMap.cols; ++x) {
+            int left = std::max(0, x - MAX_X_STEP_PER_ROW);
+            int right = std::min(costMap.cols - 1, x + MAX_X_STEP_PER_ROW);
+            double bestPrev = INF;
+            int bestPrevX = -1;
+
+            for (int px = left; px <= right; ++px) {
+                if (prevDp[px] >= INF / 2.0) continue;
+                double transitionCost = TRANSITION_WEIGHT * std::abs(x - px);
+                double candidate = prevDp[px] + transitionCost;
+                if (candidate < bestPrev) {
+                    bestPrev = candidate;
+                    bestPrevX = px;
+                }
+            }
+
+            if (bestPrevX < 0) continue;
+
+            // 轻微形状先验：不强迫走直线，只是避免跑到 ROI 边缘的孤立暗点。
+            double shapeCost = SHAPE_PRIOR_WEIGHT * std::min(1.0, std::abs(x - lineX) / (ROI_X_MARGIN + 1.0));
+            currDp[x] = bestPrev + costMap.at<float>(y, x) + shapeCost;
+            parent.at<short>(y, x) = static_cast<short>(bestPrevX);
+        }
+
+        prevDp.swap(currDp);
+    }
+
+    double totalCost = prevDp[localEnd.x];
+    if (totalCost >= INF / 2.0) return false;
+
+    std::vector<cv::Point> reversedPath;
+    int x = localEnd.x;
+    for (int y = localEnd.y; y >= localStart.y; --y) {
+        reversedPath.push_back(cv::Point(roiRect.x + x, roiRect.y + y));
+        if (y == localStart.y) break;
+
+        int prevX = parent.at<short>(y, x);
+        if (prevX < 0) return false;
+        x = prevX;
+    }
+
+    std::reverse(reversedPath.begin(), reversedPath.end());
+    curvePoints = smoothCurvePath(reversedPath, 2, originImage.size());
+    meanCost = totalCost / std::max(1, static_cast<int>(curvePoints.size()));
+    return curvePoints.size() >= 2;
+}
+
+std::vector<SeamCurveResult> traceSeamCurvesByImage(const cv::Mat& originImage, const std::vector<MatchedSeamPair>& seamPairs, const std::vector<LaserData>& laserData) {
+    std::vector<SeamCurveResult> curves;
+    curves.reserve(seamPairs.size());
+
+    for (const auto& pair : seamPairs) {
+        SeamCurveResult result;
+        result.pair = pair;
+        result.mean_cost = 0.0;
+        result.fallback_to_line = false;
+
+        cv::Point p1;
+        cv::Point p2;
+        bool hasP1 = findNearestLaserEndpoint(laserData, pair.s1.id, pair.s1.x_peak, originImage.size(), p1);
+        bool hasP2 = findNearestLaserEndpoint(laserData, pair.s2.id, pair.s2.x_peak, originImage.size(), p2);
+
+        if (!hasP1 || !hasP2) {
+            result.fallback_to_line = true;
+            std::cout << "[SeamCurve] 找不到橘缝端点对应的激光 y，跳过该条曲线。" << std::endl;
+            curves.push_back(result);
+            continue;
+        }
+
+        if (!traceSingleSeamCurve(originImage, p1, p2, result.curve_points, result.mean_cost)) {
+            // 图像证据不足时退回直线，保证实时显示和后续控制不会因为曲线搜索失败而完全丢点。
+            result.curve_points = buildLinePath(p1, p2, originImage.size());
+            result.fallback_to_line = true;
+        }
+
+        curves.push_back(result);
+    }
+
+    return curves;
+}
+
+// 画出橘缝曲线
+cv::Mat drawSeam(cv::Mat displayImage, const std::vector<SeamCurveResult>& curves) {
+    if (curves.size() < 1) return displayImage;
+    for(int i=0; i<curves.size(); i++){
+
+        double ratio = (curves.size() > 1) ? (double)i / (curves.size() - 1) : 0.0;
         
         // 起始颜色 (纯红): (0, 0, 255)
         // 结束颜色 (浅粉): (180, 180, 255) -> 你可以调整 180 这个值，越大越白
@@ -711,37 +1012,70 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> result
         int r = 255; 
         cv::Scalar currentColor(b, g, r);
 
-        // 查找对应的 y_pixel
-        int result_y1 = -1;
-        int result_y2 = -1;
-        // 第一组
-        auto it1 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
-            return item.laser_id == id && item.x_pixel == results[i].s1.x_peak;
-        });
-        if (it1 != data.end()) {
-            result_y1 = it1->y_pixel;
-        }
-        // 第二组
-        auto it2 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
-            return item.laser_id == id+1 && item.x_pixel == results[i].s2.x_peak;
-        });
-        if (it2 != data.end()) {
-            result_y2 = it2->y_pixel;
-        }
-        cv::Point p1(results[i].s1.x_peak, result_y1); 
-        cv::Point p2(results[i].s2.x_peak, result_y2);
+        if (curves[i].curve_points.size() >= 2) {
+            std::vector<std::vector<cv::Point>> polylineGroup;
+            polylineGroup.push_back(curves[i].curve_points);
+            cv::polylines(displayImage, polylineGroup, false, currentColor, 2, cv::LINE_AA);
 
-        // 画连接线（亮黄色）
-        cv::line(displayImage, p1, p2, currentColor, 2, cv::LINE_AA);
-
-        // 画出两个关键点（红色实心圆）
-        cv::circle(displayImage, p1, 3, cv::Scalar(0, 0, 255), -1);
-        cv::circle(displayImage, p2, 3, cv::Scalar(0, 0, 255), -1);
+            // 画出两个关键点（红色实心圆）
+            cv::circle(displayImage, curves[i].curve_points.front(), 3, cv::Scalar(0, 0, 255), -1);
+            cv::circle(displayImage, curves[i].curve_points.back(), 3, cv::Scalar(0, 0, 255), -1);
+        }
     }
 
     return displayImage;
 
 }
+//*********************************************** */
+//*********************************************** */
+//*********************************************** */
+
+// 画出橘缝线
+// cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data) {
+//     if (results.size() < 1) return displayImage;
+//     int id = 1;
+//     for(int i=0; i<results.size(); i++){
+
+//         double ratio = (results.size() > 1) ? (double)i / (results.size() - 1) : 0.0;
+        
+//         // 起始颜色 (纯红): (0, 0, 255)
+//         // 结束颜色 (浅粉): (180, 180, 255) -> 你可以调整 180 这个值，越大越白
+//         int b = (int)(0 + 180 * ratio); 
+//         int g = (int)(0 + 180 * ratio);
+//         int r = 255; 
+//         cv::Scalar currentColor(b, g, r);
+
+//         // 查找对应的 y_pixel
+//         int result_y1 = -1;
+//         int result_y2 = -1;
+//         // 第一组
+//         auto it1 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
+//             return item.laser_id == id && item.x_pixel == results[i].s1.x_peak;
+//         });
+//         if (it1 != data.end()) {
+//             result_y1 = it1->y_pixel;
+//         }
+//         // 第二组
+//         auto it2 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
+//             return item.laser_id == id+1 && item.x_pixel == results[i].s2.x_peak;
+//         });
+//         if (it2 != data.end()) {
+//             result_y2 = it2->y_pixel;
+//         }
+//         cv::Point p1(results[i].s1.x_peak, result_y1); 
+//         cv::Point p2(results[i].s2.x_peak, result_y2);
+
+//         // 画连接线（亮黄色）
+//         cv::line(displayImage, p1, p2, currentColor, 2, cv::LINE_AA);
+
+//         // 画出两个关键点（红色实心圆）
+//         cv::circle(displayImage, p1, 3, cv::Scalar(0, 0, 255), -1);
+//         cv::circle(displayImage, p2, 3, cv::Scalar(0, 0, 255), -1);
+//     }
+
+//     return displayImage;
+
+// }
 
 // 检测主函数
 cv::Mat detectMain(cv::Mat originImage){
@@ -755,7 +1089,9 @@ cv::Mat detectMain(cv::Mat originImage){
 
     std::vector<MatchedSeamPair> results = findSeam(seamSignalData);
     std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
-    cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
+    std::vector<SeamCurveResult> curveResults = traceSeamCurvesByImage(originImage, stableResults, data);
+    cv::Mat finalMat = drawSeam(displayImage, curveResults);
+    // cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
 
     // cv::Mat finalMat = drawSeam(displayImage, results, data);
 

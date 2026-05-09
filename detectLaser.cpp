@@ -251,7 +251,7 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
                   return cv::contourArea(a) > cv::contourArea(b);
               });
 
-    if (contours.size() > 6) contours.resize(6);
+    if (contours.size() > 10) contours.resize(10);
     return contours;
 }
 
@@ -708,9 +708,9 @@ std::vector<LaserContour> extractCenterlinePoints(
 
 // 方案A：中心线提取后修复。先找每个laser_type的最长主线，再吸收同y附近的小片段。
 std::vector<LaserContour> repairLaserLines(const std::vector<LaserContour>& lcs) {
-    const int maxGap = 80;           // 相邻中心点缺口超过该宽度(px)则不插值补线
+    const int maxGap = 50;           // 相邻中心点缺口超过该宽度(px)则不插值补线
     const int supportPoints = 10;     // 补线时左右各取多少个点拟合趋势线
-    const int attachGap = 80;        // 小片段距离主线端点超过该x距离(px)则不归并
+    const int attachGap = 50;        // 小片段距离主线端点超过该x距离(px)则不归并
     const double yAttachGate = 100;   // 小片段端点与主线端点的最大y差(px)
     const double yGateBase = 80;    // 左右趋势线在缺口中点允许的基础最大y差(px)
     const double yGateRatio = 1;  // 实际y门限随缺口宽度放宽：max(yGateBase, gap * yGateRatio)
@@ -954,115 +954,6 @@ std::vector<LaserContour> repairLaserLines(const std::vector<LaserContour>& lcs)
 
     return repaired;
 }
-
-
-// 方案B：轮廓阶段先修复。把靠近上/下主轮廓的小轮廓合并后，再重新提取中心线。
-// std::vector<std::vector<cv::Point>> repairLaserLines(const std::vector<std::vector<cv::Point>>& contours) {
-//     const int maxContourAttachGap = 100;       // 小轮廓距离主轮廓端点超过该x距离(px)则不合并
-//     const int bridgeKernelWidth = 100;         // 横向闭运算核宽度，控制断裂轮廓桥接能力
-//     const double yAttachGate = 100;          // 小轮廓中心y与主轮廓中心y允许的最大差值(px)
-//     const double minMainScoreAreaWeight = 0.15; // 主轮廓评分中面积权重：score = box.width + area * weight
-
-
-//     struct ContourInfo {
-//         int idx;
-//         cv::Rect box;
-//         double area;
-//         double centerY;
-//         double score;
-//     };
-
-//     if (contours.size() < 2) return contours;
-
-//     std::vector<ContourInfo> infos;
-//     int maxX = 0;
-//     int maxY = 0;
-//     for (int i = 0; i < (int)contours.size(); ++i) {
-//         if (contours[i].empty()) continue;
-//         cv::Rect box = cv::boundingRect(contours[i]);
-//         double area = std::max(1.0, cv::contourArea(contours[i]));
-//         double score = box.width + area * minMainScoreAreaWeight;
-//         infos.push_back({i, box, area, box.y + box.height * 0.5, score});
-//         maxX = std::max(maxX, box.x + box.width + bridgeKernelWidth + 2);
-//         maxY = std::max(maxY, box.y + box.height + 4);
-//     }
-//     if (infos.size() < 2 || maxX <= 0 || maxY <= 0) return contours;
-
-//     std::sort(infos.begin(), infos.end(), [](const ContourInfo& a, const ContourInfo& b) {
-//         return a.score > b.score;
-//     });
-
-//     ContourInfo mainA = infos[0];
-//     ContourInfo mainB = infos[1];
-//     if (mainA.centerY > mainB.centerY) std::swap(mainA, mainB);
-
-//     struct GroupState {
-//         ContourInfo main;
-//         cv::Rect range;
-//         std::vector<int> indices;
-//     };
-
-//     GroupState top{mainA, mainA.box, {mainA.idx}};
-//     GroupState bottom{mainB, mainB.box, {mainB.idx}};
-
-//     auto xGapToRange = [](const cv::Rect& box, const cv::Rect& range) {
-//         int rangeRight = range.x + range.width - 1;
-//         int boxRight = box.x + box.width - 1;
-//         if (boxRight < range.x) return range.x - boxRight - 1;
-//         if (box.x > rangeRight) return box.x - rangeRight - 1;
-//         return 0;
-//     };
-
-//     auto addToGroup = [](GroupState& group, const ContourInfo& info) {
-//         group.indices.push_back(info.idx);
-//         group.range |= info.box;
-//     };
-
-//     for (const auto& info : infos) {
-//         if (info.idx == mainA.idx || info.idx == mainB.idx) continue;
-
-//         double topYDist = std::abs(info.centerY - top.main.centerY);
-//         double bottomYDist = std::abs(info.centerY - bottom.main.centerY);
-//         GroupState* target = topYDist <= bottomYDist ? &top : &bottom;
-//         double yDist = std::min(topYDist, bottomYDist);
-//         int xGap = xGapToRange(info.box, target->range);
-
-//         if (yDist <= yAttachGate && xGap <= maxContourAttachGap) {
-//             addToGroup(*target, info);
-//         }
-//     }
-
-//     auto buildMergedContour = [&](const GroupState& group) {
-//         cv::Mat mask = cv::Mat::zeros(maxY, maxX, CV_8U);
-//         for (int idx : group.indices) {
-//             cv::drawContours(mask, contours, idx, cv::Scalar(255), cv::FILLED);
-//         }
-
-//         cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(bridgeKernelWidth, 3));
-//         cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel);
-
-//         std::vector<std::vector<cv::Point>> mergedContours;
-//         cv::findContours(mask, mergedContours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-//         if (mergedContours.empty()) return contours[group.main.idx];
-
-//         return *std::max_element(
-//             mergedContours.begin(),
-//             mergedContours.end(),
-//             [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
-//                 return cv::contourArea(a) < cv::contourArea(b);
-//             });
-//     };
-
-//     std::vector<std::vector<cv::Point>> repairedContours;
-//     repairedContours.push_back(buildMergedContour(top));
-//     repairedContours.push_back(buildMergedContour(bottom));
-
-//     std::sort(repairedContours.begin(), repairedContours.end(), [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
-//         return cv::boundingRect(a).y < cv::boundingRect(b).y;
-//     });
-
-//     return repairedContours;
-// }
 
 
 // 保存结果与可视化

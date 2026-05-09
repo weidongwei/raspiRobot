@@ -107,6 +107,20 @@ struct MatchedSeamPair {
     double total_score;
 };
 
+//*********************************************** */
+//*********************************************** */
+//*********************************************** */
+// 橘缝曲线结果：曲线点是图像像素坐标，便于绘制和后续图像坐标控制。
+struct SeamCurveResult {
+    MatchedSeamPair pair;
+    std::vector<cv::Point> curve_points;
+    double mean_cost = 0.0;
+    bool fallback_to_line = false;
+};
+//*********************************************** */
+//*********************************************** */
+//*********************************************** */
+
 bool loadVisualConfig(VisualConfig& cfg, const std::string& filename);
 std::string getTimeString();
 std::vector<LaserData> readLaserCSV(const std::string& filename);
@@ -137,7 +151,8 @@ std::vector<LaserData> buildSeamSignalData(const std::vector<LaserBaselineData>&
 SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx);
 std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::vector<LaserData>& data);
 std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData);
-cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data);
+// cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data);
+cv::Mat drawSeam(cv::Mat displayImage, const std::vector<SeamCurveResult>& curves);
 
 cv::Mat detectMain(cv::Mat originImage);
 
