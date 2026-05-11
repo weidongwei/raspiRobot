@@ -21,6 +21,14 @@ VisualConfig vConfig;
 
 SeamTracker seamTracker;
 
+// YOLO-seg 默认参数。这里故意不写入 visualConfig.json，避免影响原有视觉配置。
+static const bool YOLO_SEAM_ENABLE = true;
+static const char* YOLO_SEAM_MODEL_PATH = "/home/dw/robot/cpp/best.onnx";
+static const int YOLO_SEAM_INPUT_SIZE = 640;
+static const double YOLO_SEAM_CONF_THRESHOLD = 0.25;
+static const double YOLO_SEAM_NMS_THRESHOLD = 0.45;
+static const bool YOLO_SEAM_DRAW_ALL = true;
+static const bool YOLO_SEAM_PRINT_TIMING = true;
 
 
 // 加载json配置文件
@@ -696,347 +704,314 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
     return finalMatchedPairs;
 }
 
-//*********************************************** */
-//*********************************************** */
-//*********************************************** */
-static int clampInt(int value, int minValue, int maxValue) {
-    if (value < minValue) return minValue;
-    if (value > maxValue) return maxValue;
-    return value;
-}
+// //*********************************************** */
+// //*********************************************** */
+// //*********************************************** */
+// static int clampInt(int value, int minValue, int maxValue) {
+//     if (value < minValue) return minValue;
+//     if (value > maxValue) return maxValue;
+//     return value;
+// }
 
-static cv::Mat normalizeToFloat01(const cv::Mat& src) {
-    cv::Mat srcFloat;
-    src.convertTo(srcFloat, CV_32F);
+// static cv::Mat normalizeToFloat01(const cv::Mat& src) {
+//     cv::Mat srcFloat;
+//     src.convertTo(srcFloat, CV_32F);
 
-    double minVal = 0.0;
-    double maxVal = 0.0;
-    cv::minMaxLoc(srcFloat, &minVal, &maxVal);
-    if (maxVal - minVal < 1e-5) {
-        return cv::Mat::zeros(src.size(), CV_32F);
-    }
+//     double minVal = 0.0;
+//     double maxVal = 0.0;
+//     cv::minMaxLoc(srcFloat, &minVal, &maxVal);
+//     if (maxVal - minVal < 1e-5) {
+//         return cv::Mat::zeros(src.size(), CV_32F);
+//     }
 
-    cv::Mat dst;
-    cv::subtract(srcFloat, cv::Scalar(minVal), dst);
-    dst.convertTo(dst, CV_32F, 1.0 / (maxVal - minVal));
-    return dst;
-}
+//     cv::Mat dst;
+//     cv::subtract(srcFloat, cv::Scalar(minVal), dst);
+//     dst.convertTo(dst, CV_32F, 1.0 / (maxVal - minVal));
+//     return dst;
+// }
 
-static bool findNearestLaserEndpoint(const std::vector<LaserData>& laserData, int laserId, int targetX, const cv::Size& imageSize, cv::Point& endpoint) {
-    bool found = false;
-    int bestGap = std::numeric_limits<int>::max();
-    int bestY = -1;
+// static bool findNearestLaserEndpoint(const std::vector<LaserData>& laserData, int laserId, int targetX, const cv::Size& imageSize, cv::Point& endpoint) {
+//     bool found = false;
+//     int bestGap = std::numeric_limits<int>::max();
+//     int bestY = -1;
 
-    for (const auto& row : laserData) {
-        if (row.laser_id != laserId) continue;
+//     for (const auto& row : laserData) {
+//         if (row.laser_id != laserId) continue;
 
-        int gap = std::abs(row.x_pixel - targetX);
-        if (gap < bestGap) {
-            bestGap = gap;
-            bestY = row.y_pixel;
-            found = true;
-        }
-    }
+//         int gap = std::abs(row.x_pixel - targetX);
+//         if (gap < bestGap) {
+//             bestGap = gap;
+//             bestY = row.y_pixel;
+//             found = true;
+//         }
+//     }
 
-    if (!found || imageSize.width <= 0 || imageSize.height <= 0) return false;
+//     if (!found || imageSize.width <= 0 || imageSize.height <= 0) return false;
 
-    // SeamTracker 会平移 x_peak，平移后不一定刚好存在同 x 的激光点。
-    // 这里用“最近 x 的激光点”取 y，但保留追踪后的 targetX，让曲线端点跟随稳定轨迹。
-    endpoint.x = clampInt(targetX, 0, imageSize.width - 1);
-    endpoint.y = clampInt(bestY, 0, imageSize.height - 1);
-    return true;
-}
+//     // SeamTracker 会平移 x_peak，平移后不一定刚好存在同 x 的激光点。
+//     // 这里用“最近 x 的激光点”取 y，但保留追踪后的 targetX，让曲线端点跟随稳定轨迹。
+//     endpoint.x = clampInt(targetX, 0, imageSize.width - 1);
+//     endpoint.y = clampInt(bestY, 0, imageSize.height - 1);
+//     return true;
+// }
 
-static std::vector<cv::Point> buildLinePath(cv::Point p1, cv::Point p2, const cv::Size& imageSize) {
-    std::vector<cv::Point> path;
-    int steps = std::max(std::abs(p2.x - p1.x), std::abs(p2.y - p1.y));
-    steps = std::max(steps, 1);
-    path.reserve(steps + 1);
+// static std::vector<cv::Point> buildLinePath(cv::Point p1, cv::Point p2, const cv::Size& imageSize) {
+//     std::vector<cv::Point> path;
+//     int steps = std::max(std::abs(p2.x - p1.x), std::abs(p2.y - p1.y));
+//     steps = std::max(steps, 1);
+//     path.reserve(steps + 1);
 
-    for (int i = 0; i <= steps; ++i) {
-        double t = static_cast<double>(i) / steps;
-        int x = static_cast<int>(std::round(p1.x * (1.0 - t) + p2.x * t));
-        int y = static_cast<int>(std::round(p1.y * (1.0 - t) + p2.y * t));
-        path.push_back(cv::Point(
-            clampInt(x, 0, imageSize.width - 1),
-            clampInt(y, 0, imageSize.height - 1)
-        ));
-    }
+//     for (int i = 0; i <= steps; ++i) {
+//         double t = static_cast<double>(i) / steps;
+//         int x = static_cast<int>(std::round(p1.x * (1.0 - t) + p2.x * t));
+//         int y = static_cast<int>(std::round(p1.y * (1.0 - t) + p2.y * t));
+//         path.push_back(cv::Point(
+//             clampInt(x, 0, imageSize.width - 1),
+//             clampInt(y, 0, imageSize.height - 1)
+//         ));
+//     }
 
-    return path;
-}
+//     return path;
+// }
 
-static std::vector<cv::Point> smoothCurvePath(const std::vector<cv::Point>& path, int radius, const cv::Size& imageSize) {
-    if (path.size() < 3 || radius <= 0) return path;
+// static std::vector<cv::Point> smoothCurvePath(const std::vector<cv::Point>& path, int radius, const cv::Size& imageSize) {
+//     if (path.size() < 3 || radius <= 0) return path;
 
-    std::vector<cv::Point> smoothed = path;
-    for (int i = 1; i < static_cast<int>(path.size()) - 1; ++i) {
-        int left = std::max(0, i - radius);
-        int right = std::min(static_cast<int>(path.size()) - 1, i + radius);
-        double sumX = 0.0;
-        int count = 0;
+//     std::vector<cv::Point> smoothed = path;
+//     for (int i = 1; i < static_cast<int>(path.size()) - 1; ++i) {
+//         int left = std::max(0, i - radius);
+//         int right = std::min(static_cast<int>(path.size()) - 1, i + radius);
+//         double sumX = 0.0;
+//         int count = 0;
 
-        for (int j = left; j <= right; ++j) {
-            sumX += path[j].x;
-            count++;
-        }
+//         for (int j = left; j <= right; ++j) {
+//             sumX += path[j].x;
+//             count++;
+//         }
 
-        // 路径是逐行动态规划出来的，y 代表扫描行，平滑时只平滑 x，避免曲线行序被打乱。
-        smoothed[i].x = clampInt(static_cast<int>(std::round(sumX / std::max(1, count))), 0, imageSize.width - 1);
-        smoothed[i].y = path[i].y;
-    }
+//         // 路径是逐行动态规划出来的，y 代表扫描行，平滑时只平滑 x，避免曲线行序被打乱。
+//         smoothed[i].x = clampInt(static_cast<int>(std::round(sumX / std::max(1, count))), 0, imageSize.width - 1);
+//         smoothed[i].y = path[i].y;
+//     }
 
-    // 首尾是两条激光实际找到的橘缝端点，必须固定，不能被平滑移动。
-    smoothed.front() = path.front();
-    smoothed.back() = path.back();
-    return smoothed;
-}
+//     // 首尾是两条激光实际找到的橘缝端点，必须固定，不能被平滑移动。
+//     smoothed.front() = path.front();
+//     smoothed.back() = path.back();
+//     return smoothed;
+// }
 
-static cv::Mat buildSeamCostMap(const cv::Mat& roiImage) {
-    if (roiImage.empty()) return {};
+// static cv::Mat buildSeamCostMap(const cv::Mat& roiImage) {
+//     if (roiImage.empty()) return {};
 
-    cv::Mat bgr;
-    cv::Mat gray;
-    if (roiImage.channels() == 4) {
-        cv::cvtColor(roiImage, bgr, cv::COLOR_BGRA2BGR);
-        cv::cvtColor(roiImage, gray, cv::COLOR_BGRA2GRAY);
-    } else if (roiImage.channels() == 3) {
-        bgr = roiImage;
-        cv::cvtColor(roiImage, gray, cv::COLOR_BGR2GRAY);
-    } else {
-        gray = roiImage.clone();
-        cv::cvtColor(gray, bgr, cv::COLOR_GRAY2BGR);
-    }
+//     cv::Mat bgr;
+//     cv::Mat gray;
+//     if (roiImage.channels() == 4) {
+//         cv::cvtColor(roiImage, bgr, cv::COLOR_BGRA2BGR);
+//         cv::cvtColor(roiImage, gray, cv::COLOR_BGRA2GRAY);
+//     } else if (roiImage.channels() == 3) {
+//         bgr = roiImage;
+//         cv::cvtColor(roiImage, gray, cv::COLOR_BGR2GRAY);
+//     } else {
+//         gray = roiImage.clone();
+//         cv::cvtColor(gray, bgr, cv::COLOR_GRAY2BGR);
+//     }
 
-    cv::Mat smoothGray;
-    cv::GaussianBlur(gray, smoothGray, cv::Size(5, 5), 0);
+//     cv::Mat smoothGray;
+//     cv::GaussianBlur(gray, smoothGray, cv::Size(5, 5), 0);
 
-    int minSide = std::max(3, std::min(roiImage.cols, roiImage.rows));
-    int kernelSize = std::min(17, minSide);
-    if (kernelSize % 2 == 0) kernelSize--;
-    kernelSize = std::max(3, kernelSize);
-    cv::Mat blackhatKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernelSize, kernelSize));
-    cv::Mat blackhat;
-    cv::morphologyEx(smoothGray, blackhat, cv::MORPH_BLACKHAT, blackhatKernel);
+//     int minSide = std::max(3, std::min(roiImage.cols, roiImage.rows));
+//     int kernelSize = std::min(17, minSide);
+//     if (kernelSize % 2 == 0) kernelSize--;
+//     kernelSize = std::max(3, kernelSize);
+//     cv::Mat blackhatKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(kernelSize, kernelSize));
+//     cv::Mat blackhat;
+//     cv::morphologyEx(smoothGray, blackhat, cv::MORPH_BLACKHAT, blackhatKernel);
 
-    cv::Mat gradX, gradY, gradMag;
-    cv::Sobel(smoothGray, gradX, CV_32F, 1, 0, 3);
-    cv::Sobel(smoothGray, gradY, CV_32F, 0, 1, 3);
-    cv::magnitude(gradX, gradY, gradMag);
-    cv::Mat absGradX;
-    cv::convertScaleAbs(gradX, absGradX);
+//     cv::Mat gradX, gradY, gradMag;
+//     cv::Sobel(smoothGray, gradX, CV_32F, 1, 0, 3);
+//     cv::Sobel(smoothGray, gradY, CV_32F, 0, 1, 3);
+//     cv::magnitude(gradX, gradY, gradMag);
+//     cv::Mat absGradX;
+//     cv::convertScaleAbs(gradX, absGradX);
 
-    std::vector<cv::Mat> channels;
-    cv::split(bgr, channels);
-    cv::Mat bFloat, gFloat, rFloat;
-    channels[0].convertTo(bFloat, CV_32F);
-    channels[1].convertTo(gFloat, CV_32F);
-    channels[2].convertTo(rFloat, CV_32F);
-    cv::Mat greenRaw = gFloat - 0.5 * (bFloat + rFloat);
-    cv::threshold(greenRaw, greenRaw, 0.0, 0.0, cv::THRESH_TOZERO);
+//     std::vector<cv::Mat> channels;
+//     cv::split(bgr, channels);
+//     cv::Mat bFloat, gFloat, rFloat;
+//     channels[0].convertTo(bFloat, CV_32F);
+//     channels[1].convertTo(gFloat, CV_32F);
+//     channels[2].convertTo(rFloat, CV_32F);
+//     cv::Mat greenRaw = gFloat - 0.5 * (bFloat + rFloat);
+//     cv::threshold(greenRaw, greenRaw, 0.0, 0.0, cv::THRESH_TOZERO);
 
-    cv::Mat hsv;
-    cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
-    std::vector<cv::Mat> hsvChannels;
-    cv::split(hsv, hsvChannels);
+//     cv::Mat hsv;
+//     cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
+//     std::vector<cv::Mat> hsvChannels;
+//     cv::split(hsv, hsvChannels);
 
-    cv::Mat blackhatEvidence = normalizeToFloat01(blackhat);
-    cv::Mat grayFloat = normalizeToFloat01(smoothGray);
-    cv::Mat ones = cv::Mat::ones(grayFloat.size(), CV_32F);
-    cv::Mat darkEvidence = ones - grayFloat;
-    cv::Mat gradEvidence = normalizeToFloat01(gradMag);
-    cv::Mat verticalEdgeEvidence = normalizeToFloat01(absGradX);
-    cv::Mat brightEvidence = normalizeToFloat01(hsvChannels[2]);
-    cv::Mat lowSaturationEvidence = ones - normalizeToFloat01(hsvChannels[1]);
-    cv::Mat brightPithEvidence = brightEvidence.mul(lowSaturationEvidence);
-    cv::Mat greenPenalty = normalizeToFloat01(greenRaw);
+//     cv::Mat blackhatEvidence = normalizeToFloat01(blackhat);
+//     cv::Mat grayFloat = normalizeToFloat01(smoothGray);
+//     cv::Mat ones = cv::Mat::ones(grayFloat.size(), CV_32F);
+//     cv::Mat darkEvidence = ones - grayFloat;
+//     cv::Mat gradEvidence = normalizeToFloat01(gradMag);
+//     cv::Mat verticalEdgeEvidence = normalizeToFloat01(absGradX);
+//     cv::Mat brightEvidence = normalizeToFloat01(hsvChannels[2]);
+//     cv::Mat lowSaturationEvidence = ones - normalizeToFloat01(hsvChannels[1]);
+//     cv::Mat brightPithEvidence = brightEvidence.mul(lowSaturationEvidence);
+//     cv::Mat greenPenalty = normalizeToFloat01(greenRaw);
 
-    // 代价图的含义：越像橘缝，代价越低；越不像橘缝，代价越高。
-    // 橘缝既可能是暗凹槽，也可能是白色/浅黄色橘络，所以这里同时保留两类证据。
-    cv::Mat darkGrooveEvidence = 0.65 * blackhatEvidence + 0.35 * darkEvidence;
-    // 白色橘络通常表现为“亮度高 + 饱和度低”，和橘皮橙色高饱和纹理区分开。
-    cv::Mat pithLineEvidence = 0.75 * brightPithEvidence + 0.25 * verticalEdgeEvidence;
-    // 竖向边界梯度比全方向梯度更偏向分瓣线，弱化横向激光边缘的影响。
-    cv::Mat seamEvidence = 0.35 * darkGrooveEvidence
-                          + 0.45 * pithLineEvidence
-                          + 0.20 * verticalEdgeEvidence;
+//     // 代价图的含义：越像橘缝，代价越低；越不像橘缝，代价越高。
+//     // 橘缝既可能是暗凹槽，也可能是白色/浅黄色橘络，所以这里同时保留两类证据。
+//     cv::Mat darkGrooveEvidence = 0.65 * blackhatEvidence + 0.35 * darkEvidence;
+//     // 白色橘络通常表现为“亮度高 + 饱和度低”，和橘皮橙色高饱和纹理区分开。
+//     cv::Mat pithLineEvidence = 0.75 * brightPithEvidence + 0.25 * verticalEdgeEvidence;
+//     // 竖向边界梯度比全方向梯度更偏向分瓣线，弱化横向激光边缘的影响。
+//     cv::Mat seamEvidence = 0.35 * darkGrooveEvidence
+//                           + 0.45 * pithLineEvidence
+//                           + 0.20 * verticalEdgeEvidence;
 
-    // 绿色激光是测量工具，不是橘缝本体。这里提高绿色高亮区域的代价，避免路径沿激光横线走。
-    cv::Mat cost = ones - seamEvidence + 0.75 * greenPenalty;
-    cv::GaussianBlur(cost, cost, cv::Size(3, 3), 0);
-    return cost;
-}
+//     // 绿色激光是测量工具，不是橘缝本体。这里提高绿色高亮区域的代价，避免路径沿激光横线走。
+//     cv::Mat cost = ones - seamEvidence + 0.75 * greenPenalty;
+//     cv::GaussianBlur(cost, cost, cv::Size(3, 3), 0);
+//     return cost;
+// }
 
-static bool traceSingleSeamCurve(const cv::Mat& originImage, cv::Point p1, cv::Point p2, std::vector<cv::Point>& curvePoints, double& meanCost) {
-    if (originImage.empty()) return false;
+// static bool traceSingleSeamCurve(const cv::Mat& originImage, cv::Point p1, cv::Point p2, std::vector<cv::Point>& curvePoints, double& meanCost) {
+//     if (originImage.empty()) return false;
 
-    cv::Point start = p1;
-    cv::Point end = p2;
-    if (start.y > end.y) {
-        std::swap(start, end);
-    }
+//     cv::Point start = p1;
+//     cv::Point end = p2;
+//     if (start.y > end.y) {
+//         std::swap(start, end);
+//     }
 
-    const int MIN_VERTICAL_SPAN = 8;
-    const int ROI_X_MARGIN = 70;
-    const int ROI_Y_MARGIN = 8;
-    const int MAX_X_STEP_PER_ROW = 6;
-    const double TRANSITION_WEIGHT = 0.03;
-    const double SHAPE_PRIOR_WEIGHT = 0.18;
+//     const int MIN_VERTICAL_SPAN = 8;
+//     const int ROI_X_MARGIN = 70;
+//     const int ROI_Y_MARGIN = 8;
+//     const int MAX_X_STEP_PER_ROW = 6;
+//     const double TRANSITION_WEIGHT = 0.03;
+//     const double SHAPE_PRIOR_WEIGHT = 0.18;
 
-    if (std::abs(end.y - start.y) < MIN_VERTICAL_SPAN) return false;
+//     if (std::abs(end.y - start.y) < MIN_VERTICAL_SPAN) return false;
 
-    int x0 = clampInt(std::min(start.x, end.x) - ROI_X_MARGIN, 0, originImage.cols - 1);
-    int x1 = clampInt(std::max(start.x, end.x) + ROI_X_MARGIN, 0, originImage.cols - 1);
-    int y0 = clampInt(std::min(start.y, end.y) - ROI_Y_MARGIN, 0, originImage.rows - 1);
-    int y1 = clampInt(std::max(start.y, end.y) + ROI_Y_MARGIN, 0, originImage.rows - 1);
-    if (x1 <= x0 || y1 <= y0) return false;
+//     int x0 = clampInt(std::min(start.x, end.x) - ROI_X_MARGIN, 0, originImage.cols - 1);
+//     int x1 = clampInt(std::max(start.x, end.x) + ROI_X_MARGIN, 0, originImage.cols - 1);
+//     int y0 = clampInt(std::min(start.y, end.y) - ROI_Y_MARGIN, 0, originImage.rows - 1);
+//     int y1 = clampInt(std::max(start.y, end.y) + ROI_Y_MARGIN, 0, originImage.rows - 1);
+//     if (x1 <= x0 || y1 <= y0) return false;
 
-    cv::Rect roiRect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
-    cv::Mat costMap = buildSeamCostMap(originImage(roiRect));
-    if (costMap.empty()) return false;
+//     cv::Rect roiRect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+//     cv::Mat costMap = buildSeamCostMap(originImage(roiRect));
+//     if (costMap.empty()) return false;
 
-    cv::Point localStart(start.x - roiRect.x, start.y - roiRect.y);
-    cv::Point localEnd(end.x - roiRect.x, end.y - roiRect.y);
-    localStart.x = clampInt(localStart.x, 0, costMap.cols - 1);
-    localEnd.x = clampInt(localEnd.x, 0, costMap.cols - 1);
-    localStart.y = clampInt(localStart.y, 0, costMap.rows - 1);
-    localEnd.y = clampInt(localEnd.y, 0, costMap.rows - 1);
+//     cv::Point localStart(start.x - roiRect.x, start.y - roiRect.y);
+//     cv::Point localEnd(end.x - roiRect.x, end.y - roiRect.y);
+//     localStart.x = clampInt(localStart.x, 0, costMap.cols - 1);
+//     localEnd.x = clampInt(localEnd.x, 0, costMap.cols - 1);
+//     localStart.y = clampInt(localStart.y, 0, costMap.rows - 1);
+//     localEnd.y = clampInt(localEnd.y, 0, costMap.rows - 1);
 
-    const double INF = std::numeric_limits<double>::max() / 4.0;
-    std::vector<double> prevDp(costMap.cols, INF);
-    std::vector<double> currDp(costMap.cols, INF);
-    cv::Mat parent(costMap.rows, costMap.cols, CV_16S, cv::Scalar(-1));
+//     const double INF = std::numeric_limits<double>::max() / 4.0;
+//     std::vector<double> prevDp(costMap.cols, INF);
+//     std::vector<double> currDp(costMap.cols, INF);
+//     cv::Mat parent(costMap.rows, costMap.cols, CV_16S, cv::Scalar(-1));
 
-    prevDp[localStart.x] = costMap.at<float>(localStart.y, localStart.x);
+//     prevDp[localStart.x] = costMap.at<float>(localStart.y, localStart.x);
 
-    // 动态规划：从上端点逐行走到下端点。
-    // 每下一行只允许 x 移动 MAX_X_STEP_PER_ROW，防止路径突然跳到无关暗纹。
-    // 两点本身不能确定曲线，这里的“图像代价 + 平滑约束”提供了中间曲线的证据。
-    for (int y = localStart.y + 1; y <= localEnd.y; ++y) {
-        std::fill(currDp.begin(), currDp.end(), INF);
-        double t = static_cast<double>(y - localStart.y) / std::max(1, localEnd.y - localStart.y);
-        double lineX = localStart.x * (1.0 - t) + localEnd.x * t;
+//     // 动态规划：从上端点逐行走到下端点。
+//     // 每下一行只允许 x 移动 MAX_X_STEP_PER_ROW，防止路径突然跳到无关暗纹。
+//     // 两点本身不能确定曲线，这里的“图像代价 + 平滑约束”提供了中间曲线的证据。
+//     for (int y = localStart.y + 1; y <= localEnd.y; ++y) {
+//         std::fill(currDp.begin(), currDp.end(), INF);
+//         double t = static_cast<double>(y - localStart.y) / std::max(1, localEnd.y - localStart.y);
+//         double lineX = localStart.x * (1.0 - t) + localEnd.x * t;
 
-        for (int x = 0; x < costMap.cols; ++x) {
-            int left = std::max(0, x - MAX_X_STEP_PER_ROW);
-            int right = std::min(costMap.cols - 1, x + MAX_X_STEP_PER_ROW);
-            double bestPrev = INF;
-            int bestPrevX = -1;
+//         for (int x = 0; x < costMap.cols; ++x) {
+//             int left = std::max(0, x - MAX_X_STEP_PER_ROW);
+//             int right = std::min(costMap.cols - 1, x + MAX_X_STEP_PER_ROW);
+//             double bestPrev = INF;
+//             int bestPrevX = -1;
 
-            for (int px = left; px <= right; ++px) {
-                if (prevDp[px] >= INF / 2.0) continue;
-                double transitionCost = TRANSITION_WEIGHT * std::abs(x - px);
-                double candidate = prevDp[px] + transitionCost;
-                if (candidate < bestPrev) {
-                    bestPrev = candidate;
-                    bestPrevX = px;
-                }
-            }
+//             for (int px = left; px <= right; ++px) {
+//                 if (prevDp[px] >= INF / 2.0) continue;
+//                 double transitionCost = TRANSITION_WEIGHT * std::abs(x - px);
+//                 double candidate = prevDp[px] + transitionCost;
+//                 if (candidate < bestPrev) {
+//                     bestPrev = candidate;
+//                     bestPrevX = px;
+//                 }
+//             }
 
-            if (bestPrevX < 0) continue;
+//             if (bestPrevX < 0) continue;
 
-            // 轻微形状先验：不强迫走直线，只是避免跑到 ROI 边缘的孤立暗点。
-            double shapeCost = SHAPE_PRIOR_WEIGHT * std::min(1.0, std::abs(x - lineX) / (ROI_X_MARGIN + 1.0));
-            currDp[x] = bestPrev + costMap.at<float>(y, x) + shapeCost;
-            parent.at<short>(y, x) = static_cast<short>(bestPrevX);
-        }
+//             // 轻微形状先验：不强迫走直线，只是避免跑到 ROI 边缘的孤立暗点。
+//             double shapeCost = SHAPE_PRIOR_WEIGHT * std::min(1.0, std::abs(x - lineX) / (ROI_X_MARGIN + 1.0));
+//             currDp[x] = bestPrev + costMap.at<float>(y, x) + shapeCost;
+//             parent.at<short>(y, x) = static_cast<short>(bestPrevX);
+//         }
 
-        prevDp.swap(currDp);
-    }
+//         prevDp.swap(currDp);
+//     }
 
-    double totalCost = prevDp[localEnd.x];
-    if (totalCost >= INF / 2.0) return false;
+//     double totalCost = prevDp[localEnd.x];
+//     if (totalCost >= INF / 2.0) return false;
 
-    std::vector<cv::Point> reversedPath;
-    int x = localEnd.x;
-    for (int y = localEnd.y; y >= localStart.y; --y) {
-        reversedPath.push_back(cv::Point(roiRect.x + x, roiRect.y + y));
-        if (y == localStart.y) break;
+//     std::vector<cv::Point> reversedPath;
+//     int x = localEnd.x;
+//     for (int y = localEnd.y; y >= localStart.y; --y) {
+//         reversedPath.push_back(cv::Point(roiRect.x + x, roiRect.y + y));
+//         if (y == localStart.y) break;
 
-        int prevX = parent.at<short>(y, x);
-        if (prevX < 0) return false;
-        x = prevX;
-    }
+//         int prevX = parent.at<short>(y, x);
+//         if (prevX < 0) return false;
+//         x = prevX;
+//     }
 
-    std::reverse(reversedPath.begin(), reversedPath.end());
-    curvePoints = smoothCurvePath(reversedPath, 2, originImage.size());
-    meanCost = totalCost / std::max(1, static_cast<int>(curvePoints.size()));
-    return curvePoints.size() >= 2;
-}
+//     std::reverse(reversedPath.begin(), reversedPath.end());
+//     curvePoints = smoothCurvePath(reversedPath, 2, originImage.size());
+//     meanCost = totalCost / std::max(1, static_cast<int>(curvePoints.size()));
+//     return curvePoints.size() >= 2;
+// }
 
-std::vector<SeamCurveResult> traceSeamCurvesByImage(const cv::Mat& originImage, const std::vector<MatchedSeamPair>& seamPairs, const std::vector<LaserData>& laserData) {
-    std::vector<SeamCurveResult> curves;
-    curves.reserve(seamPairs.size());
+// std::vector<SeamCurveResult> traceSeamCurvesByImage(const cv::Mat& originImage, const std::vector<MatchedSeamPair>& seamPairs, const std::vector<LaserData>& laserData) {
+//     std::vector<SeamCurveResult> curves;
+//     curves.reserve(seamPairs.size());
 
-    for (const auto& pair : seamPairs) {
-        SeamCurveResult result;
-        result.pair = pair;
-        result.mean_cost = 0.0;
-        result.fallback_to_line = false;
+//     for (const auto& pair : seamPairs) {
+//         SeamCurveResult result;
+//         result.pair = pair;
+//         result.mean_cost = 0.0;
+//         result.fallback_to_line = false;
 
-        cv::Point p1;
-        cv::Point p2;
-        bool hasP1 = findNearestLaserEndpoint(laserData, pair.s1.id, pair.s1.x_peak, originImage.size(), p1);
-        bool hasP2 = findNearestLaserEndpoint(laserData, pair.s2.id, pair.s2.x_peak, originImage.size(), p2);
+//         cv::Point p1;
+//         cv::Point p2;
+//         bool hasP1 = findNearestLaserEndpoint(laserData, pair.s1.id, pair.s1.x_peak, originImage.size(), p1);
+//         bool hasP2 = findNearestLaserEndpoint(laserData, pair.s2.id, pair.s2.x_peak, originImage.size(), p2);
 
-        if (!hasP1 || !hasP2) {
-            result.fallback_to_line = true;
-            std::cout << "[SeamCurve] 找不到橘缝端点对应的激光 y，跳过该条曲线。" << std::endl;
-            curves.push_back(result);
-            continue;
-        }
+//         if (!hasP1 || !hasP2) {
+//             result.fallback_to_line = true;
+//             std::cout << "[SeamCurve] 找不到橘缝端点对应的激光 y，跳过该条曲线。" << std::endl;
+//             curves.push_back(result);
+//             continue;
+//         }
 
-        if (!traceSingleSeamCurve(originImage, p1, p2, result.curve_points, result.mean_cost)) {
-            // 图像证据不足时退回直线，保证实时显示和后续控制不会因为曲线搜索失败而完全丢点。
-            result.curve_points = buildLinePath(p1, p2, originImage.size());
-            result.fallback_to_line = true;
-        }
+//         if (!traceSingleSeamCurve(originImage, p1, p2, result.curve_points, result.mean_cost)) {
+//             // 图像证据不足时退回直线，保证实时显示和后续控制不会因为曲线搜索失败而完全丢点。
+//             result.curve_points = buildLinePath(p1, p2, originImage.size());
+//             result.fallback_to_line = true;
+//         }
 
-        curves.push_back(result);
-    }
+//         curves.push_back(result);
+//     }
 
-    return curves;
-}
+//     return curves;
+// }
 
-// 画出橘缝曲线
-cv::Mat drawSeam(cv::Mat displayImage, const std::vector<SeamCurveResult>& curves) {
-    if (curves.size() < 1) return displayImage;
-    for(int i=0; i<curves.size(); i++){
+// // 画出橘缝曲线
+// cv::Mat drawSeam(cv::Mat displayImage, const std::vector<SeamCurveResult>& curves) {
+//     if (curves.size() < 1) return displayImage;
+//     for(int i=0; i<curves.size(); i++){
 
-        double ratio = (curves.size() > 1) ? (double)i / (curves.size() - 1) : 0.0;
-        
-        // 起始颜色 (纯红): (0, 0, 255)
-        // 结束颜色 (浅粉): (180, 180, 255) -> 你可以调整 180 这个值，越大越白
-        int b = (int)(0 + 180 * ratio); 
-        int g = (int)(0 + 180 * ratio);
-        int r = 255; 
-        cv::Scalar currentColor(b, g, r);
-
-        if (curves[i].curve_points.size() >= 2) {
-            std::vector<std::vector<cv::Point>> polylineGroup;
-            polylineGroup.push_back(curves[i].curve_points);
-            cv::polylines(displayImage, polylineGroup, false, currentColor, 2, cv::LINE_AA);
-
-            // 画出两个关键点（红色实心圆）
-            cv::circle(displayImage, curves[i].curve_points.front(), 3, cv::Scalar(0, 0, 255), -1);
-            cv::circle(displayImage, curves[i].curve_points.back(), 3, cv::Scalar(0, 0, 255), -1);
-        }
-    }
-
-    return displayImage;
-
-}
-//*********************************************** */
-//*********************************************** */
-//*********************************************** */
-
-// 画出橘缝线
-// cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data) {
-//     if (results.size() < 1) return displayImage;
-//     int id = 1;
-//     for(int i=0; i<results.size(); i++){
-
-//         double ratio = (results.size() > 1) ? (double)i / (results.size() - 1) : 0.0;
+//         double ratio = (curves.size() > 1) ? (double)i / (curves.size() - 1) : 0.0;
         
 //         // 起始颜色 (纯红): (0, 0, 255)
 //         // 结束颜色 (浅粉): (180, 180, 255) -> 你可以调整 180 这个值，越大越白
@@ -1045,37 +1020,445 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<SeamCurveResult>& curve
 //         int r = 255; 
 //         cv::Scalar currentColor(b, g, r);
 
-//         // 查找对应的 y_pixel
-//         int result_y1 = -1;
-//         int result_y2 = -1;
-//         // 第一组
-//         auto it1 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
-//             return item.laser_id == id && item.x_pixel == results[i].s1.x_peak;
-//         });
-//         if (it1 != data.end()) {
-//             result_y1 = it1->y_pixel;
-//         }
-//         // 第二组
-//         auto it2 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
-//             return item.laser_id == id+1 && item.x_pixel == results[i].s2.x_peak;
-//         });
-//         if (it2 != data.end()) {
-//             result_y2 = it2->y_pixel;
-//         }
-//         cv::Point p1(results[i].s1.x_peak, result_y1); 
-//         cv::Point p2(results[i].s2.x_peak, result_y2);
+//         if (curves[i].curve_points.size() >= 2) {
+//             std::vector<std::vector<cv::Point>> polylineGroup;
+//             polylineGroup.push_back(curves[i].curve_points);
+//             cv::polylines(displayImage, polylineGroup, false, currentColor, 2, cv::LINE_AA);
 
-//         // 画连接线（亮黄色）
-//         cv::line(displayImage, p1, p2, currentColor, 2, cv::LINE_AA);
-
-//         // 画出两个关键点（红色实心圆）
-//         cv::circle(displayImage, p1, 3, cv::Scalar(0, 0, 255), -1);
-//         cv::circle(displayImage, p2, 3, cv::Scalar(0, 0, 255), -1);
+//             // 画出两个关键点（红色实心圆）
+//             cv::circle(displayImage, curves[i].curve_points.front(), 3, cv::Scalar(0, 0, 255), -1);
+//             cv::circle(displayImage, curves[i].curve_points.back(), 3, cv::Scalar(0, 0, 255), -1);
+//         }
 //     }
 
 //     return displayImage;
 
 // }
+// //*********************************************** */
+// //*********************************************** */
+// //*********************************************** */
+
+// 画出橘缝线
+cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data) {
+    if (results.size() < 1) return displayImage;
+    int id = 1;
+    for(int i=0; i<results.size(); i++){
+
+        double ratio = (results.size() > 1) ? (double)i / (results.size() - 1) : 0.0;
+        
+        // 起始颜色 (纯红): (0, 0, 255)
+        // 结束颜色 (浅粉): (180, 180, 255) -> 你可以调整 180 这个值，越大越白
+        int b = (int)(0 + 180 * ratio); 
+        int g = (int)(0 + 180 * ratio);
+        int r = 255; 
+        cv::Scalar currentColor(b, g, r);
+
+        // 查找对应的 y_pixel
+        int result_y1 = -1;
+        int result_y2 = -1;
+        // 第一组
+        auto it1 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
+            return item.laser_id == id && item.x_pixel == results[i].s1.x_peak;
+        });
+        if (it1 != data.end()) {
+            result_y1 = it1->y_pixel;
+        }
+        // 第二组
+        auto it2 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
+            return item.laser_id == id+1 && item.x_pixel == results[i].s2.x_peak;
+        });
+        if (it2 != data.end()) {
+            result_y2 = it2->y_pixel;
+        }
+        cv::Point p1(results[i].s1.x_peak, result_y1); 
+        cv::Point p2(results[i].s2.x_peak, result_y2);
+
+        // 画连接线（亮黄色）
+        cv::line(displayImage, p1, p2, currentColor, 2, cv::LINE_AA);
+
+        // 画出两个关键点（红色实心圆）
+        cv::circle(displayImage, p1, 3, cv::Scalar(0, 0, 255), -1);
+        cv::circle(displayImage, p2, 3, cv::Scalar(0, 0, 255), -1);
+    }
+
+    return displayImage;
+
+}
+
+//**********************yolo************************* */
+//*********************************************** */
+//*********************************************** */
+struct YoloLetterboxInfo {
+    float scale = 1.0f;
+    int padX = 0;
+    int padY = 0;
+    int newW = 0;
+    int newH = 0;
+};
+
+struct YoloSegResult {
+    int classId = 0;
+    float score = 0.0f;
+    cv::Rect box;
+    cv::Mat mask;
+};
+
+static float sigmoidFloat(float x) {
+    return 1.0f / (1.0f + std::exp(-x));
+}
+
+static cv::Mat yoloLetterbox(const cv::Mat& image, int inputSize, YoloLetterboxInfo& info) {
+    const int w = image.cols;
+    const int h = image.rows;
+    info.scale = std::min(inputSize / static_cast<float>(w), inputSize / static_cast<float>(h));
+    info.newW = static_cast<int>(std::round(w * info.scale));
+    info.newH = static_cast<int>(std::round(h * info.scale));
+    info.padX = (inputSize - info.newW) / 2;
+    info.padY = (inputSize - info.newH) / 2;
+
+    cv::Mat resized;
+    cv::resize(image, resized, cv::Size(info.newW, info.newH));
+
+    cv::Mat output(inputSize, inputSize, image.type(), cv::Scalar(114, 114, 114));
+    resized.copyTo(output(cv::Rect(info.padX, info.padY, info.newW, info.newH)));
+    return output;
+}
+
+static cv::Mat yoloDetectionsToRows(const cv::Mat& blob) {
+    if (blob.dims == 2) return blob.clone();
+    if (blob.dims != 3 || blob.size[0] != 1) {
+        throw std::runtime_error("YOLO detection output shape unsupported.");
+    }
+
+    cv::Mat mat(blob.size[1], blob.size[2], CV_32F, const_cast<float*>(blob.ptr<float>()));
+    if (blob.size[1] < blob.size[2]) {
+        cv::Mat transposed;
+        cv::transpose(mat, transposed);
+        return transposed.clone();
+    }
+    return mat.clone();
+}
+
+static cv::Mat yoloProtoToRows(const cv::Mat& proto, int& maskDim, int& maskH, int& maskW) {
+    if (proto.dims != 4 || proto.size[0] != 1) {
+        throw std::runtime_error("YOLO mask prototype output shape unsupported.");
+    }
+    maskDim = proto.size[1];
+    maskH = proto.size[2];
+    maskW = proto.size[3];
+    return cv::Mat(maskDim, maskH * maskW, CV_32F, const_cast<float*>(proto.ptr<float>())).clone();
+}
+
+static cv::Mat buildYoloMask(
+    const std::vector<float>& coeff,
+    const cv::Mat& protoRows,
+    int maskH,
+    int maskW,
+    const YoloLetterboxInfo& info,
+    cv::Size originalSize,
+    int inputSize
+) {
+    cv::Mat coeffMat(1, static_cast<int>(coeff.size()), CV_32F, const_cast<float*>(coeff.data()));
+    cv::Mat maskFlat = coeffMat * protoRows;
+    cv::Mat mask(maskH, maskW, CV_32F, maskFlat.ptr<float>());
+
+    cv::Mat prob(maskH, maskW, CV_32F);
+    for (int y = 0; y < maskH; ++y) {
+        const float* src = mask.ptr<float>(y);
+        float* dst = prob.ptr<float>(y);
+        for (int x = 0; x < maskW; ++x) {
+            dst[x] = sigmoidFloat(src[x]);
+        }
+    }
+
+    cv::Mat inputMask;
+    cv::resize(prob, inputMask, cv::Size(inputSize, inputSize), 0, 0, cv::INTER_LINEAR);
+
+    cv::Rect roi(info.padX, info.padY, info.newW, info.newH);
+    roi &= cv::Rect(0, 0, inputMask.cols, inputMask.rows);
+    cv::Mat unpadded = inputMask(roi).clone();
+
+    cv::Mat originalProb;
+    cv::resize(unpadded, originalProb, originalSize, 0, 0, cv::INTER_LINEAR);
+
+    cv::Mat binary;
+    cv::threshold(originalProb, binary, 0.5, 255.0, cv::THRESH_BINARY);
+    binary.convertTo(binary, CV_8U);
+    return binary;
+}
+
+static cv::dnn::Net* getYoloSegNet() {
+    static cv::dnn::Net net;
+    static bool triedLoad = false;
+    static bool loaded = false;
+
+    if (!YOLO_SEAM_ENABLE) return nullptr;
+    if (!triedLoad) {
+        triedLoad = true;
+        try {
+            net = cv::dnn::readNetFromONNX(YOLO_SEAM_MODEL_PATH);
+            loaded = !net.empty();
+            if (loaded) {
+                std::cout << "[YOLO-seg] 模型加载完成: " << YOLO_SEAM_MODEL_PATH << std::endl;
+            } else {
+                std::cerr << "[YOLO-seg] 模型为空，使用传统橘缝曲线。" << std::endl;
+            }
+        } catch (const std::exception& e) {
+            loaded = false;
+            std::cerr << "[YOLO-seg] 模型加载失败: " << e.what() << "，使用传统橘缝曲线。" << std::endl;
+        }
+    }
+
+    return loaded ? &net : nullptr;
+}
+
+static std::vector<YoloSegResult> inferYoloSeg(const cv::Mat& image) {
+    std::vector<YoloSegResult> results;
+    cv::dnn::Net* net = getYoloSegNet();
+    if (net == nullptr || image.empty()) return results;
+
+    try {
+        YoloLetterboxInfo info;
+        int inputSize = std::max(32, YOLO_SEAM_INPUT_SIZE);
+        cv::Mat input = yoloLetterbox(image, inputSize, info);
+        cv::Mat blob = cv::dnn::blobFromImage(input, 1.0 / 255.0, cv::Size(inputSize, inputSize), cv::Scalar(), true, false);
+        net->setInput(blob);
+
+        std::vector<cv::Mat> outputs;
+        net->forward(outputs, net->getUnconnectedOutLayersNames());
+        if (outputs.size() < 2) return results;
+
+        cv::Mat detRows = yoloDetectionsToRows(outputs[0]);
+        int maskDim = 0;
+        int maskH = 0;
+        int maskW = 0;
+        cv::Mat protoRows = yoloProtoToRows(outputs[1], maskDim, maskH, maskW);
+        const int numClasses = detRows.cols - 4 - maskDim;
+        if (numClasses <= 0) return results;
+
+        std::vector<cv::Rect> boxes;
+        std::vector<float> scores;
+        std::vector<int> classIds;
+        std::vector<std::vector<float>> coeffs;
+        float confThreshold = static_cast<float>(YOLO_SEAM_CONF_THRESHOLD);
+
+        for (int i = 0; i < detRows.rows; ++i) {
+            const float* row = detRows.ptr<float>(i);
+            int bestClass = 0;
+            float bestScore = row[4];
+            for (int c = 1; c < numClasses; ++c) {
+                if (row[4 + c] > bestScore) {
+                    bestScore = row[4 + c];
+                    bestClass = c;
+                }
+            }
+            if (bestScore < confThreshold) continue;
+
+            const float cx = row[0];
+            const float cy = row[1];
+            const float bw = row[2];
+            const float bh = row[3];
+            int left = static_cast<int>(std::round((cx - bw * 0.5f - info.padX) / info.scale));
+            int top = static_cast<int>(std::round((cy - bh * 0.5f - info.padY) / info.scale));
+            int width = static_cast<int>(std::round(bw / info.scale));
+            int height = static_cast<int>(std::round(bh / info.scale));
+            cv::Rect box(left, top, width, height);
+            box &= cv::Rect(0, 0, image.cols, image.rows);
+            if (box.area() <= 0) continue;
+
+            std::vector<float> coeff(maskDim);
+            for (int k = 0; k < maskDim; ++k) {
+                coeff[k] = row[4 + numClasses + k];
+            }
+
+            boxes.push_back(box);
+            scores.push_back(bestScore);
+            classIds.push_back(bestClass);
+            coeffs.push_back(std::move(coeff));
+        }
+
+        std::vector<int> keep;
+        cv::dnn::NMSBoxes(boxes, scores, confThreshold, static_cast<float>(YOLO_SEAM_NMS_THRESHOLD), keep);
+
+        for (int idx : keep) {
+            YoloSegResult result;
+            result.classId = classIds[idx];
+            result.score = scores[idx];
+            result.box = boxes[idx];
+            result.mask = buildYoloMask(coeffs[idx], protoRows, maskH, maskW, info, image.size(), inputSize);
+
+            cv::Mat boxMask = cv::Mat::zeros(result.mask.size(), CV_8U);
+            cv::rectangle(boxMask, result.box, 255, cv::FILLED);
+            cv::bitwise_and(result.mask, boxMask, result.mask);
+            results.push_back(std::move(result));
+        }
+
+        std::sort(results.begin(), results.end(), [](const YoloSegResult& a, const YoloSegResult& b) {
+            return a.score > b.score;
+        });
+    } catch (const std::exception& e) {
+        std::cerr << "[YOLO-seg] 推理失败: " << e.what() << std::endl;
+    }
+
+    return results;
+}
+
+static void yoloThinningIteration(cv::Mat& img, int iter) {
+    cv::Mat marker = cv::Mat::zeros(img.size(), CV_8UC1);
+    for (int i = 1; i < img.rows - 1; ++i) {
+        for (int j = 1; j < img.cols - 1; ++j) {
+            uchar p2 = img.at<uchar>(i - 1, j);
+            uchar p3 = img.at<uchar>(i - 1, j + 1);
+            uchar p4 = img.at<uchar>(i, j + 1);
+            uchar p5 = img.at<uchar>(i + 1, j + 1);
+            uchar p6 = img.at<uchar>(i + 1, j);
+            uchar p7 = img.at<uchar>(i + 1, j - 1);
+            uchar p8 = img.at<uchar>(i, j - 1);
+            uchar p9 = img.at<uchar>(i - 1, j - 1);
+
+            int transitions = (p2 == 0 && p3 == 1) + (p3 == 0 && p4 == 1) +
+                              (p4 == 0 && p5 == 1) + (p5 == 0 && p6 == 1) +
+                              (p6 == 0 && p7 == 1) + (p7 == 0 && p8 == 1) +
+                              (p8 == 0 && p9 == 1) + (p9 == 0 && p2 == 1);
+            int neighbors = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+            int m1 = iter == 0 ? (p2 * p4 * p6) : (p2 * p4 * p8);
+            int m2 = iter == 0 ? (p4 * p6 * p8) : (p2 * p6 * p8);
+
+            if (transitions == 1 && neighbors >= 2 && neighbors <= 6 && m1 == 0 && m2 == 0) {
+                marker.at<uchar>(i, j) = 1;
+            }
+        }
+    }
+    img &= ~marker;
+}
+
+static cv::Mat skeletonizeYoloMask(const cv::Mat& binaryMask) {
+    cv::Mat img;
+    cv::threshold(binaryMask, img, 1, 1, cv::THRESH_BINARY);
+    cv::Mat prev = cv::Mat::zeros(img.size(), CV_8UC1);
+    cv::Mat diff;
+
+    do {
+        yoloThinningIteration(img, 0);
+        yoloThinningIteration(img, 1);
+        cv::absdiff(img, prev, diff);
+        img.copyTo(prev);
+    } while (cv::countNonZero(diff) > 0);
+
+    img *= 255;
+    return img;
+}
+
+static double yoloMaskPointCost(const cv::Mat& mask, const std::vector<cv::Point>& laserPoints) {
+    if (laserPoints.empty()) return 0.0;
+
+    cv::Mat inv;
+    cv::threshold(mask, inv, 1, 255, cv::THRESH_BINARY_INV);
+    cv::Mat dist;
+    cv::distanceTransform(inv, dist, cv::DIST_L2, 3);
+
+    double cost = 0.0;
+    for (const cv::Point& p : laserPoints) {
+        if (p.x < 0 || p.y < 0 || p.x >= mask.cols || p.y >= mask.rows) {
+            cost += 1000.0;
+        } else {
+            cost += dist.at<float>(p.y, p.x);
+        }
+    }
+    return cost / static_cast<double>(laserPoints.size());
+}
+
+static std::set<int> selectYoloMasksByLaserPoints(
+    const std::vector<YoloSegResult>& results,
+    const std::vector<MatchedSeamPair>& seamPairs,
+    const std::vector<LaserData>& laserData,
+    const cv::Size& imageSize
+) {
+    std::set<int> selected;
+    if (results.empty()) return selected;
+
+    for (const auto& pair : seamPairs) {
+        cv::Point p1;
+        cv::Point p2;
+
+        std::vector<cv::Point> laserPoints = {p1, p2};
+        int bestIdx = -1;
+        double bestCost = std::numeric_limits<double>::max();
+        for (int i = 0; i < static_cast<int>(results.size()); ++i) {
+            double cost = yoloMaskPointCost(results[i].mask, laserPoints) - 10.0 * results[i].score;
+            if (cost < bestCost) {
+                bestCost = cost;
+                bestIdx = i;
+            }
+        }
+        if (bestIdx >= 0) selected.insert(bestIdx);
+    }
+
+    return selected;
+}
+
+static cv::Mat drawYoloSegResults(
+    cv::Mat displayImage,
+    const std::vector<YoloSegResult>& results,
+    const std::set<int>& selectedMaskIds
+) {
+    if (results.empty()) return displayImage;
+
+    const std::vector<cv::Scalar> colors = {
+        cv::Scalar(0, 0, 255),
+        cv::Scalar(255, 0, 0),
+        cv::Scalar(0, 165, 255),
+        cv::Scalar(255, 0, 255),
+        cv::Scalar(255, 255, 0),
+        cv::Scalar(0, 255, 255),
+    };
+
+    cv::Mat maskLayer = displayImage.clone();
+    int drawCount = YOLO_SEAM_DRAW_ALL ? static_cast<int>(results.size()) : std::min(1, static_cast<int>(results.size()));
+    for (int i = 0; i < drawCount; ++i) {
+        cv::Mat colorImage(displayImage.size(), displayImage.type(), colors[i % colors.size()]);
+        colorImage.copyTo(maskLayer, results[i].mask);
+    }
+
+    cv::Mat overlay;
+    cv::addWeighted(maskLayer, 0.35, displayImage, 0.65, 0.0, overlay);
+
+    for (int i = 0; i < drawCount; ++i) {
+        bool selected = selectedMaskIds.count(i) > 0;
+        cv::Scalar color = selected ? cv::Scalar(0, 255, 0) : colors[i % colors.size()];
+        int width = selected ? 3 : 2;
+
+        std::vector<std::vector<cv::Point>> contours;
+        cv::findContours(results[i].mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+        cv::drawContours(overlay, contours, -1, color, width);
+
+        cv::Mat skeleton = skeletonizeYoloMask(results[i].mask);
+        for (int y = 0; y < skeleton.rows; ++y) {
+            for (int x = 0; x < skeleton.cols; ++x) {
+                if (skeleton.at<uchar>(y, x) > 0) {
+                    overlay.at<cv::Vec3b>(y, x) = cv::Vec3b(255, 255, 255);
+                }
+            }
+        }
+
+        cv::rectangle(overlay, results[i].box, color, width);
+        cv::putText(
+            overlay,
+            "yolo" + std::to_string(i) + " " + std::to_string(results[i].score).substr(0, 4),
+            results[i].box.tl() + cv::Point(0, -5),
+            cv::FONT_HERSHEY_SIMPLEX,
+            0.55,
+            color,
+            2,
+            cv::LINE_AA
+        );
+    }
+
+    return overlay;
+}
+//**********************yolo************************* */
+//*********************************************** */
+//*********************************************** */
 
 // 检测主函数
 cv::Mat detectMain(cv::Mat originImage){
@@ -1089,13 +1472,26 @@ cv::Mat detectMain(cv::Mat originImage){
 
     std::vector<MatchedSeamPair> results = findSeam(seamSignalData);
     std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
-    std::vector<SeamCurveResult> curveResults = traceSeamCurvesByImage(originImage, stableResults, data);
-    cv::Mat finalMat = drawSeam(displayImage, curveResults);
-    // cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
+    // std::vector<SeamCurveResult> curveResults = traceSeamCurvesByImage(originImage, stableResults, data);
+    // cv::Mat finalMat = drawSeam(displayImage, curveResults);
+    cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
 
     // cv::Mat finalMat = drawSeam(displayImage, results, data);
 
+
+    std::vector<YoloSegResult> yoloResults = inferYoloSeg(originImage);
+    if (!yoloResults.empty()) {
+        std::set<int> selectedMaskIds = selectYoloMasksByLaserPoints(yoloResults, stableResults, data, originImage.size());
+        finalMat = drawYoloSegResults(finalMat, yoloResults, selectedMaskIds);
+        std::cout << "[YOLO-seg] 橘缝数量: " << yoloResults.size();
+        if (!selectedMaskIds.empty()) {
+            std::cout << ", 激光约束匹配数量: " << selectedMaskIds.size();
+        }
+        std::cout << std::endl;
+    }
+
     cv::waitKey(1);
+
 
     return finalMat;
 }
