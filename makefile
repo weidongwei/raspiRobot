@@ -8,7 +8,7 @@ LDFLAGS = -lwiringPi `pkg-config --libs opencv4`
 # 定义目标文件名
 TARGET = motor
 # 定义所有的源文件
-SRCS = main.cpp thread.cpp communicate.cpp motor.cpp ImgProc.cpp detectLaser.cpp SeamTracker.cpp calibrateCamera.cpp
+SRCS = main.cpp thread.cpp communicate.cpp motor.cpp ImgProc.cpp detectLaser.cpp SeamTracker.cpp calibrateCamera.cpp yolo-seg.cpp unet.cpp
 
 # 将 .cpp 后缀替换为 .o
 OBJS = $(SRCS:.cpp=.o)
