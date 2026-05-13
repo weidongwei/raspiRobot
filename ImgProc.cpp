@@ -768,9 +768,11 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<SeamCurveResult>& curve
             polylineGroup.push_back(curves[i].curve_points);
             cv::polylines(displayImage, polylineGroup, false, currentColor, 2, cv::LINE_AA);
 
-            // 画出两个关键点（红色实心圆）
-            cv::circle(displayImage, curves[i].curve_points.front(), 3, cv::Scalar(0, 0, 255), -1);
-            cv::circle(displayImage, curves[i].curve_points.back(), 3, cv::Scalar(0, 0, 255), -1);
+            // 画出两条激光实际找到的橘缝锚点（黑色实心圆）
+            if (curves[i].has_laser_points) {
+                cv::circle(displayImage, curves[i].laser_point1, 4, cv::Scalar(0, 0, 0), -1, cv::LINE_AA);
+                cv::circle(displayImage, curves[i].laser_point2, 4, cv::Scalar(0, 0, 0), -1, cv::LINE_AA);
+            }
         }
     }
 
@@ -784,38 +786,33 @@ static double elapsedMs(std::chrono::steady_clock::time_point begin, std::chrono
 
 // 检测主函数
 cv::Mat detectMain(cv::Mat originImage){
-    cv::Mat displayImage;
-    std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
-    std::vector<LaserData> smoothData = smooth(data);
+    // cv::Mat displayImage;
+    // std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
+    // std::vector<LaserData> smoothData = smooth(data);
 
-    std::vector<LaserBaselineData> baselineData = getLaserBaselineDistance(smoothData, 80, 0.25);
-    // saveLaserBaselineCSV(baselineData, vConfig.csv_path + getTimeString() + "_points_baseline.csv");
-    std::vector<LaserData> seamSignalData = buildSeamSignalData(baselineData);
+    // // 获取基线数据，改进激光数据
+    // std::vector<LaserBaselineData> baselineData = getLaserBaselineDistance(smoothData, 80, 0.25);
+    // // saveLaserBaselineCSV(baselineData, vConfig.csv_path + getTimeString() + "_points_baseline.csv");
+    // std::vector<LaserData> seamSignalData = buildSeamSignalData(baselineData);
 
-    std::vector<MatchedSeamPair> results = findSeam(seamSignalData);
-    std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
-    // std::vector<SeamCurveResult> curveResults = traceSeamCurvesByImage(originImage, stableResults, data);
+    // // 传统方法找橘缝
+    // std::vector<MatchedSeamPair> results = findSeam(seamSignalData);
+    // std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
+    // // std::vector<SeamCurveResult> curveResults = traceSeamCurvesByImage(originImage, stableResults, data);
 
-    auto unetStart = std::chrono::steady_clock::now();
-    std::vector<SeamCurveResult> curveResults = traceSeamCurvesByUnet(originImage, stableResults, data);
-    auto unetEnd = std::chrono::steady_clock::now();
-    cv::Mat finalMat = drawSeam(displayImage, curveResults);
-    // cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
+    // // unet找橘缝曲线
+    // std::vector<SeamCurveResult> curveResults = traceSeamCurvesByUnet(originImage, stableResults, data);
+    // cv::Mat finalMat = drawSeam(displayImage, curveResults);
+    // // cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
+    // // cv::Mat finalMat = drawSeam(displayImage, results, data);
 
-    // cv::Mat finalMat = drawSeam(displayImage, results, data);
+    // // YoloSegTiming yoloTiming;
+    // // finalMat = applyYoloSegToDisplay(originImage, finalMat, stableResults, data, USE_YOLO_LASER_SELECTION, &yoloTiming);
 
-    // YoloSegTiming yoloTiming;
-    // finalMat = applyYoloSegToDisplay(originImage, finalMat, stableResults, data, USE_YOLO_LASER_SELECTION, &yoloTiming);
-
-    
+    cv::Mat finalMat = drawUnetSeamProbabilityPoints(originImage, 0.9f, 2);
 
     cv::waitKey(1);
 
-    if (PRINT_DETECT_TIMING) {
-        std::cout << std::fixed << std::setprecision(2)
-                  << "[Timing] unet_curve=" << elapsedMs(unetStart, unetEnd) << " ms"
-                  << std::endl;
-    }
 
     return finalMat;
 }

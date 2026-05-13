@@ -114,8 +114,11 @@ struct MatchedSeamPair {
 struct SeamCurveResult {
     MatchedSeamPair pair;
     std::vector<cv::Point> curve_points;
+    cv::Point laser_point1;
+    cv::Point laser_point2;
     double mean_cost = 0.0;
     bool fallback_to_line = false;
+    bool has_laser_points = false;
 };
 //*********************************************** */
 //*********************************************** */

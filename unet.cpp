@@ -8,32 +8,81 @@
 #include <limits>
 #include <stdexcept>
 
+// 总开关：false 时不加载 U-Net，曲线会退回传统端点直线兜底。
 static const bool UNET_SEAM_ENABLE = true;
+// 树莓派部署时优先加载的 ONNX 路径。
 static const char* UNET_MODEL_PATH_PRIMARY = "/home/dw/robot/cpp/best_unet.onnx";
+// 本地/相对路径兜底，方便在项目目录中直接运行。
 static const char* UNET_MODEL_PATH_FALLBACK = "cpp/best_unet.onnx";
+// 模型固定输入尺寸；必须和 train3/export_onnx.py 导出的尺寸一致。
 static const int UNET_INPUT_SIZE = 320;
+// DP 追线时，端点连线左右额外扩展的搜索宽度。越大越能跟弯曲线，但越容易跑偏。
 static const int UNET_ROI_X_MARGIN = 80;
+// DP 追线时，端点上下额外扩展的搜索高度，主要避免端点贴边导致裁剪过紧。
 static const int UNET_ROI_Y_MARGIN = 8;
+// 两个端点 y 差小于该值时认为跨度太短，不做 DP 追线。
 static const int UNET_MIN_VERTICAL_SPAN = 8;
+// DP 每向下一行允许的最大横向跳动像素。越大曲线越灵活，越小曲线越平滑。
 static const int UNET_MAX_X_STEP_PER_ROW = 6;
+// DP 横向跳动惩罚权重，用来抑制曲线突然左右跳。
 static const double UNET_TRANSITION_WEIGHT = 0.03;
+// DP 直线先验权重，用来防止路径跑到 ROI 边缘的孤立高概率点。
 static const double UNET_SHAPE_PRIOR_WEIGHT = 0.14;
+// 提取完整候选曲线时的基础概率阈值，不会低于这个值。
+static const float UNET_FULL_CURVE_BASE_THRESHOLD = 0.50f;
+// 提取完整候选曲线时使用的概率分位数；0.97 表示只保留最高约 3% 的概率区域。
+static const double UNET_FULL_CURVE_PERCENTILE = 0.97;
+// 连通域面积小于该值时视为噪声，不作为完整候选曲线。
+static const int UNET_FULL_CURVE_MIN_AREA = 30;
+// 候选曲线中心线点数小于该值时丢弃，避免短碎片干扰。
+static const int UNET_FULL_CURVE_MIN_POINTS = 12;
+// 最多保留的完整候选曲线数量，防止噪声过多拖慢后续匹配。
+static const int UNET_FULL_CURVE_MAX_COUNT = 12;
+// 两个激光锚点到候选完整曲线的平均距离门限，超过则认为该候选不匹配。
+static const double UNET_FULL_CURVE_ANCHOR_GATE = 80.0;
 
+// 前向声明：执行 U-Net ONNX 推理并返回与原图同尺寸的 0~1 概率图。
+static cv::Mat inferUnetProbability(const cv::Mat& image);
+
+// 将整数坐标限制在指定范围内，避免访问图像边界外的像素。
 static int clampIntUnet(int value, int minValue, int maxValue) {
     if (value < minValue) return minValue;
     if (value > maxValue) return maxValue;
     return value;
 }
 
+// 检查模型文件是否存在；用于优先加载树莓派部署路径，失败后尝试本地相对路径。
 static bool fileExistsUnet(const std::string& path) {
     std::ifstream file(path.c_str());
     return file.good();
 }
 
+// 计算概率图的分位数阈值，用来从“全图概率”里自适应取出最高置信度区域。
+static float probabilityPercentileUnet(const cv::Mat& probability, double percentile) {
+    std::vector<float> values;
+    values.reserve(probability.total());
+
+    for (int y = 0; y < probability.rows; ++y) {
+        const float* row = probability.ptr<float>(y);
+        for (int x = 0; x < probability.cols; ++x) {
+            values.push_back(row[x]);
+        }
+    }
+
+    if (values.empty()) return 1.0f;
+    percentile = std::min(1.0, std::max(0.0, percentile));
+    size_t idx = static_cast<size_t>(std::round(percentile * static_cast<double>(values.size() - 1)));
+    idx = std::min(idx, values.size() - 1);
+    std::nth_element(values.begin(), values.begin() + idx, values.end());
+    return values[idx];
+}
+
+// 将模型 logits 转成概率；如果导出的 ONNX 已带 sigmoid，则推理阶段会跳过这一步。
 static float sigmoidUnet(float x) {
     return 1.0f / (1.0f + std::exp(-x));
 }
 
+// 根据 findSeam() 给出的 x_peak，在对应 laser_id 的激光点列中找最近 y，恢复真实图像端点。
 static bool findNearestLaserEndpointUnet(
     const std::vector<LaserData>& laserData,
     int laserId,
@@ -63,6 +112,7 @@ static bool findNearestLaserEndpointUnet(
     return true;
 }
 
+// 构造两个端点之间的直线路径；当模型或 DP 追线失败时作为兜底输出。
 static std::vector<cv::Point> buildLinePathUnet(cv::Point p1, cv::Point p2, const cv::Size& imageSize) {
     std::vector<cv::Point> path;
     int steps = std::max(std::abs(p2.x - p1.x), std::abs(p2.y - p1.y));
@@ -82,6 +132,7 @@ static std::vector<cv::Point> buildLinePathUnet(cv::Point p1, cv::Point p2, cons
     return path;
 }
 
+// 对逐行路径做轻微 x 方向平滑，保留 y 的扫描顺序，并固定首尾端点。
 static std::vector<cv::Point> smoothCurvePathUnet(const std::vector<cv::Point>& path, int radius, const cv::Size& imageSize) {
     if (path.size() < 3 || radius <= 0) return path;
 
@@ -106,6 +157,21 @@ static std::vector<cv::Point> smoothCurvePathUnet(const std::vector<cv::Point>& 
     return smoothed;
 }
 
+// 把任意输入图转换成 BGR 显示图，供调试函数直接在图上画概率点。
+static cv::Mat makeBgrDisplayImageUnet(const cv::Mat& image) {
+    cv::Mat display;
+    if (image.empty()) return display;
+    if (image.channels() == 4) {
+        cv::cvtColor(image, display, cv::COLOR_BGRA2BGR);
+    } else if (image.channels() == 1) {
+        cv::cvtColor(image, display, cv::COLOR_GRAY2BGR);
+    } else {
+        display = image.clone();
+    }
+    return display;
+}
+
+// 延迟加载 U-Net ONNX 模型。第一次调用时加载，之后复用同一个 OpenCV DNN Net。
 static cv::dnn::Net* getUnetNet() {
     static cv::dnn::Net net;
     static bool triedLoad = false;
@@ -144,6 +210,59 @@ static cv::dnn::Net* getUnetNet() {
     return loaded ? &net : nullptr;
 }
 
+// 调试可视化：只运行 U-Net 概率图推理，把超过阈值的像素用蓝色点标在原图上。
+cv::Mat drawUnetSeamProbabilityPoints(
+    const cv::Mat& originImage,
+    float threshold,
+    int pointStride
+) {
+    cv::Mat display = makeBgrDisplayImageUnet(originImage);
+    if (display.empty()) return display;
+
+    cv::Mat probability = inferUnetProbability(originImage);
+    if (probability.empty()) return display;
+
+    threshold = std::min(1.0f, std::max(0.0f, threshold));
+    pointStride = std::max(1, pointStride);
+
+    double minProb = 0.0;
+    double maxProb = 0.0;
+    cv::minMaxLoc(probability, &minProb, &maxProb);
+    int pointCount = 0;
+    int radius = (pointStride <= 2) ? 1 : std::max(1, pointStride / 2);
+
+    for (int y = 0; y < probability.rows; y += pointStride) {
+        const float* probRow = probability.ptr<float>(y);
+        for (int x = 0; x < probability.cols; x += pointStride) {
+            if (probRow[x] >= threshold) {
+                cv::circle(display, cv::Point(x, y), radius, cv::Scalar(255, 0, 0), -1, cv::LINE_AA);
+                pointCount++;
+            }
+        }
+    }
+
+    std::cout << "[U-Net] prob_points threshold=" << threshold
+              << ", min=" << minProb
+              << ", max=" << maxProb
+              << ", points=" << pointCount
+              << std::endl;
+
+    return display;
+}
+
+// 调试可视化的保存版本：生成蓝色概率点图并写入指定路径。
+bool saveUnetSeamProbabilityPoints(
+    const cv::Mat& originImage,
+    const std::string& outputPath,
+    float threshold,
+    int pointStride
+) {
+    cv::Mat display = drawUnetSeamProbabilityPoints(originImage, threshold, pointStride);
+    if (display.empty()) return false;
+    return cv::imwrite(outputPath, display);
+}
+
+// 按训练时的预处理方式构造输入 blob：BGR->RGB、resize 320、0~1、ImageNet mean/std。
 static cv::Mat makeUnetBlob(const cv::Mat& image) {
     cv::Mat bgr;
     if (image.channels() == 4) {
@@ -172,6 +291,7 @@ static cv::Mat makeUnetBlob(const cv::Mat& image) {
     return cv::dnn::blobFromImage(normalized, 1.0, cv::Size(UNET_INPUT_SIZE, UNET_INPUT_SIZE), cv::Scalar(), false, false);
 }
 
+// 执行 U-Net 推理并把 320x320 输出恢复到原图尺寸。返回值是每个像素属于橘缝的概率。
 static cv::Mat inferUnetProbability(const cv::Mat& image) {
     cv::dnn::Net* net = getUnetNet();
     if (net == nullptr || image.empty()) return {};
@@ -216,6 +336,7 @@ static cv::Mat inferUnetProbability(const cv::Mat& image) {
     }
 }
 
+// 在两个给定端点之间，用 U-Net 概率图做逐行动态规划，寻找最低代价橘缝路径。
 static bool traceSingleCurveByProbability(
     const cv::Mat& probability,
     cv::Point p1,
@@ -308,6 +429,232 @@ static bool traceSingleCurveByProbability(
     return curvePoints.size() >= 2;
 }
 
+// 从概率图中构造高置信度二值 mask，用于估计完整橘缝的上下延伸范围。
+static cv::Mat buildUnetFullCurveMask(const cv::Mat& probability, float& effectiveThreshold) {
+    if (probability.empty()) return {};
+
+    float percentileThreshold = probabilityPercentileUnet(probability, UNET_FULL_CURVE_PERCENTILE);
+    effectiveThreshold = std::max(UNET_FULL_CURVE_BASE_THRESHOLD, percentileThreshold);
+
+    cv::Mat binary(probability.size(), CV_8U, cv::Scalar(0));
+    for (int y = 0; y < probability.rows; ++y) {
+        const float* probRow = probability.ptr<float>(y);
+        uchar* dstRow = binary.ptr<uchar>(y);
+        for (int x = 0; x < probability.cols; ++x) {
+            if (probRow[x] >= effectiveThreshold) {
+                dstRow[x] = 255;
+            }
+        }
+    }
+
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
+    cv::morphologyEx(binary, binary, cv::MORPH_CLOSE, kernel);
+    return binary;
+}
+
+// 对单个连通域按 y 行统计概率加权 x 中心，得到该连通域的粗中心线。
+static std::vector<cv::Point> centerlineFromComponentRows(
+    const cv::Mat& labels,
+    int componentId,
+    const cv::Mat& probability,
+    double& meanProbability
+) {
+    std::vector<cv::Point> points;
+    double probSum = 0.0;
+    int probCount = 0;
+
+    for (int y = 0; y < labels.rows; ++y) {
+        const int* labelRow = labels.ptr<int>(y);
+        const float* probRow = probability.ptr<float>(y);
+        double weightedX = 0.0;
+        double weightSum = 0.0;
+
+        for (int x = 0; x < labels.cols; ++x) {
+            if (labelRow[x] != componentId) continue;
+
+            double weight = std::max(1e-4, static_cast<double>(probRow[x]));
+            weightedX += x * weight;
+            weightSum += weight;
+            probSum += probRow[x];
+            probCount++;
+        }
+
+        if (weightSum > 0.0) {
+            int centerX = clampIntUnet(static_cast<int>(std::round(weightedX / weightSum)), 0, labels.cols - 1);
+            points.push_back(cv::Point(centerX, y));
+        }
+    }
+
+    meanProbability = probCount > 0 ? probSum / probCount : 0.0;
+    if (points.size() < 2) return points;
+    return smoothCurvePathUnet(points, 3, probability.size());
+}
+
+// 计算一条曲线的平均 x，用于候选曲线从左到右排序。
+static double meanXOfCurveUnet(const std::vector<cv::Point>& points) {
+    if (points.empty()) return 0.0;
+    double sum = 0.0;
+    for (const auto& p : points) {
+        sum += p.x;
+    }
+    return sum / static_cast<double>(points.size());
+}
+
+// 计算一个激光锚点到某条候选曲线的最近欧氏距离。
+static double pointToCurveDistanceUnet(const cv::Point& p, const std::vector<cv::Point>& curve) {
+    if (curve.empty()) return std::numeric_limits<double>::max() / 4.0;
+
+    double best = std::numeric_limits<double>::max();
+    for (const auto& q : curve) {
+        double dx = static_cast<double>(p.x - q.x);
+        double dy = static_cast<double>(p.y - q.y);
+        best = std::min(best, std::sqrt(dx * dx + dy * dy));
+    }
+    return best;
+}
+
+// 用两个激光锚点到候选曲线的平均距离，衡量该候选曲线是否对应当前橘缝对。
+static double curveAnchorCostUnet(const std::vector<cv::Point>& curve, cv::Point p1, cv::Point p2) {
+    double d1 = pointToCurveDistanceUnet(p1, curve);
+    double d2 = pointToCurveDistanceUnet(p2, curve);
+    return 0.5 * (d1 + d2);
+}
+
+// 拼接上/中/下三段曲线；如果相邻段首尾相同，则跳过重复端点。
+static void appendCurveSegmentUnet(std::vector<cv::Point>& dst, const std::vector<cv::Point>& segment) {
+    if (segment.empty()) return;
+    if (dst.empty()) {
+        dst.insert(dst.end(), segment.begin(), segment.end());
+        return;
+    }
+
+    size_t start = 0;
+    if (dst.back() == segment.front()) {
+        start = 1;
+    }
+    dst.insert(dst.end(), segment.begin() + start, segment.end());
+}
+
+// 以两个激光点为锚点生成整条橘缝：上段、中段、下段都用概率图 DP 追线。
+static bool buildThreePartCurveByProbability(
+    const cv::Mat& probability,
+    cv::Point p1,
+    cv::Point p2,
+    const std::vector<cv::Point>* selectedFullCurve,
+    cv::Size imageSize,
+    std::vector<cv::Point>& curvePoints,
+    double& meanCost
+) {
+    curvePoints.clear();
+    meanCost = 0.0;
+    if (probability.empty()) return false;
+
+    cv::Point topLaser = p1;
+    cv::Point bottomLaser = p2;
+    if (topLaser.y > bottomLaser.y) {
+        std::swap(topLaser, bottomLaser);
+    }
+
+    std::vector<cv::Point> middleSegment;
+    double middleCost = 0.0;
+    if (!traceSingleCurveByProbability(probability, topLaser, bottomLaser, middleSegment, middleCost)) {
+        middleSegment = buildLinePathUnet(topLaser, bottomLaser, imageSize);
+        middleCost = 1.0;
+    }
+
+    std::vector<cv::Point> upperSegment;
+    std::vector<cv::Point> lowerSegment;
+    double upperCost = 0.0;
+    double lowerCost = 0.0;
+    int costCount = 1;
+
+    if (selectedFullCurve != nullptr && selectedFullCurve->size() >= 2) {
+        cv::Point topEnd = selectedFullCurve->front();
+        cv::Point bottomEnd = selectedFullCurve->back();
+        if (topEnd.y > bottomEnd.y) {
+            std::swap(topEnd, bottomEnd);
+        }
+
+        if (topLaser.y - topEnd.y >= UNET_MIN_VERTICAL_SPAN) {
+            if (traceSingleCurveByProbability(probability, topEnd, topLaser, upperSegment, upperCost)) {
+                costCount++;
+            } else {
+                upperSegment.clear();
+            }
+        }
+
+        if (bottomEnd.y - bottomLaser.y >= UNET_MIN_VERTICAL_SPAN) {
+            if (traceSingleCurveByProbability(probability, bottomLaser, bottomEnd, lowerSegment, lowerCost)) {
+                costCount++;
+            } else {
+                lowerSegment.clear();
+            }
+        }
+    }
+
+    appendCurveSegmentUnet(curvePoints, upperSegment);
+    appendCurveSegmentUnet(curvePoints, middleSegment);
+    appendCurveSegmentUnet(curvePoints, lowerSegment);
+
+    if (curvePoints.size() >= 3) {
+        curvePoints = smoothCurvePathUnet(curvePoints, 2, imageSize);
+    }
+
+    meanCost = (middleCost + upperCost + lowerCost) / std::max(1, costCount);
+    return curvePoints.size() >= 2;
+}
+
+// 从 U-Net 概率图中提取若干条完整候选橘缝中心线，主要用于确定上/下延伸端点。
+static std::vector<SeamCurveResult> extractFullUnetCurves(const cv::Mat& probability) {
+    std::vector<SeamCurveResult> curves;
+    if (probability.empty()) return curves;
+
+    float effectiveThreshold = 0.0f;
+    cv::Mat binary = buildUnetFullCurveMask(probability, effectiveThreshold);
+    if (binary.empty()) return curves;
+
+    cv::Mat labels;
+    cv::Mat stats;
+    cv::Mat centroids;
+    int componentCount = cv::connectedComponentsWithStats(binary, labels, stats, centroids, 8, CV_32S);
+
+    for (int id = 1; id < componentCount; ++id) {
+        int area = stats.at<int>(id, cv::CC_STAT_AREA);
+        if (area < UNET_FULL_CURVE_MIN_AREA) continue;
+
+        double meanProbability = 0.0;
+        std::vector<cv::Point> centerline = centerlineFromComponentRows(labels, id, probability, meanProbability);
+        if (static_cast<int>(centerline.size()) < UNET_FULL_CURVE_MIN_POINTS) continue;
+
+        SeamCurveResult result;
+        result.curve_points = centerline;
+        result.mean_cost = 1.0 - meanProbability;
+        result.fallback_to_line = false;
+        curves.push_back(result);
+    }
+
+    std::sort(curves.begin(), curves.end(), [](const SeamCurveResult& a, const SeamCurveResult& b) {
+        if (a.curve_points.size() != b.curve_points.size()) {
+            return a.curve_points.size() > b.curve_points.size();
+        }
+        return meanXOfCurveUnet(a.curve_points) < meanXOfCurveUnet(b.curve_points);
+    });
+
+    if (static_cast<int>(curves.size()) > UNET_FULL_CURVE_MAX_COUNT) {
+        curves.resize(UNET_FULL_CURVE_MAX_COUNT);
+    }
+
+    std::sort(curves.begin(), curves.end(), [](const SeamCurveResult& a, const SeamCurveResult& b) {
+        return meanXOfCurveUnet(a.curve_points) < meanXOfCurveUnet(b.curve_points);
+    });
+
+    std::cout << "[U-Net] full_curves threshold=" << effectiveThreshold
+              << ", curves=" << curves.size()
+              << std::endl;
+    return curves;
+}
+
+// 主入口：传统双激光结果给出锚点，U-Net 概率图负责追踪中间及上下延伸的整条曲线。
 std::vector<SeamCurveResult> traceSeamCurvesByUnet(
     const cv::Mat& originImage,
     const std::vector<MatchedSeamPair>& seamPairs,
@@ -316,10 +663,16 @@ std::vector<SeamCurveResult> traceSeamCurvesByUnet(
     std::vector<SeamCurveResult> curves;
     curves.reserve(seamPairs.size());
 
-    if (originImage.empty() || seamPairs.empty()) return curves;
+    if (originImage.empty()) return curves;
 
     cv::Mat probability = inferUnetProbability(originImage);
+    std::vector<SeamCurveResult> fullCurves = extractFullUnetCurves(probability);
 
+    if (seamPairs.empty()) {
+        return fullCurves;
+    }
+
+    std::vector<bool> used(fullCurves.size(), false);
     for (const auto& pair : seamPairs) {
         SeamCurveResult result;
         result.pair = pair;
@@ -330,6 +683,9 @@ std::vector<SeamCurveResult> traceSeamCurvesByUnet(
         cv::Point p2;
         bool hasP1 = findNearestLaserEndpointUnet(laserData, pair.s1.id, pair.s1.x_peak, originImage.size(), p1);
         bool hasP2 = findNearestLaserEndpointUnet(laserData, pair.s2.id, pair.s2.x_peak, originImage.size(), p2);
+        result.laser_point1 = p1;
+        result.laser_point2 = p2;
+        result.has_laser_points = hasP1 && hasP2;
 
         if (!hasP1 || !hasP2) {
             result.fallback_to_line = true;
@@ -338,7 +694,37 @@ std::vector<SeamCurveResult> traceSeamCurvesByUnet(
             continue;
         }
 
-        if (probability.empty() || !traceSingleCurveByProbability(probability, p1, p2, result.curve_points, result.mean_cost)) {
+        int bestIdx = -1;
+        double bestCost = std::numeric_limits<double>::max();
+        for (int i = 0; i < static_cast<int>(fullCurves.size()); ++i) {
+            if (used[i]) continue;
+
+            double cost = curveAnchorCostUnet(fullCurves[i].curve_points, p1, p2);
+            if (cost < bestCost) {
+                bestCost = cost;
+                bestIdx = i;
+            }
+        }
+
+        const std::vector<cv::Point>* selectedFullCurve = nullptr;
+        if (bestIdx >= 0 && bestCost <= UNET_FULL_CURVE_ANCHOR_GATE) {
+            selectedFullCurve = &fullCurves[bestIdx].curve_points;
+        }
+
+        if (!probability.empty() && buildThreePartCurveByProbability(
+                probability,
+                p1,
+                p2,
+                selectedFullCurve,
+                originImage.size(),
+                result.curve_points,
+                result.mean_cost
+            )) {
+            result.fallback_to_line = false;
+            if (selectedFullCurve != nullptr && bestIdx >= 0) {
+                used[bestIdx] = true;
+            }
+        } else {
             result.curve_points = buildLinePathUnet(p1, p2, originImage.size());
             result.fallback_to_line = true;
         }
