@@ -154,7 +154,7 @@ std::vector<LaserData> buildSeamSignalData(const std::vector<LaserBaselineData>&
 SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx);
 std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::vector<LaserData>& data);
 std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData);
-// cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data);
+cv::Mat drawSeam2(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data);
 cv::Mat drawSeam(cv::Mat displayImage, const std::vector<SeamCurveResult>& curves);
 
 cv::Mat detectMain(cv::Mat originImage);

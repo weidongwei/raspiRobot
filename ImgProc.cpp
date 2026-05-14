@@ -702,52 +702,38 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
 }
 
 
-// // 画出橘缝线
-// cv::Mat drawSeam(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data) {
-//     if (results.size() < 1) return displayImage;
-//     int id = 1;
-//     for(int i=0; i<results.size(); i++){
+// 画出两个激光橘缝点的直连线，用于和 U-Net 曲线结果做对比。
+cv::Mat drawSeam2(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data) {
+    if (results.size() < 1) return displayImage;
 
-//         double ratio = (results.size() > 1) ? (double)i / (results.size() - 1) : 0.0;
-        
-//         // 起始颜色 (纯红): (0, 0, 255)
-//         // 结束颜色 (浅粉): (180, 180, 255) -> 你可以调整 180 这个值，越大越白
-//         int b = (int)(0 + 180 * ratio); 
-//         int g = (int)(0 + 180 * ratio);
-//         int r = 255; 
-//         cv::Scalar currentColor(b, g, r);
+    const cv::Scalar purple(255, 0, 255);
+    for (const auto& seamPair : results) {
+        int result_y1 = -1;
+        int result_y2 = -1;
 
-//         // 查找对应的 y_pixel
-//         int result_y1 = -1;
-//         int result_y2 = -1;
-//         // 第一组
-//         auto it1 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
-//             return item.laser_id == id && item.x_pixel == results[i].s1.x_peak;
-//         });
-//         if (it1 != data.end()) {
-//             result_y1 = it1->y_pixel;
-//         }
-//         // 第二组
-//         auto it2 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
-//             return item.laser_id == id+1 && item.x_pixel == results[i].s2.x_peak;
-//         });
-//         if (it2 != data.end()) {
-//             result_y2 = it2->y_pixel;
-//         }
-//         cv::Point p1(results[i].s1.x_peak, result_y1); 
-//         cv::Point p2(results[i].s2.x_peak, result_y2);
+        auto it1 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
+            return item.laser_id == seamPair.s1.id && item.x_pixel == seamPair.s1.x_peak;
+        });
+        if (it1 != data.end()) {
+            result_y1 = it1->y_pixel;
+        }
 
-//         // 画连接线（亮黄色）
-//         cv::line(displayImage, p1, p2, currentColor, 2, cv::LINE_AA);
+        auto it2 = std::find_if(data.begin(), data.end(), [&](const LaserData& item) {
+            return item.laser_id == seamPair.s2.id && item.x_pixel == seamPair.s2.x_peak;
+        });
+        if (it2 != data.end()) {
+            result_y2 = it2->y_pixel;
+        }
 
-//         // 画出两个关键点（红色实心圆）
-//         cv::circle(displayImage, p1, 3, cv::Scalar(0, 0, 255), -1);
-//         cv::circle(displayImage, p2, 3, cv::Scalar(0, 0, 255), -1);
-//     }
+        if (result_y1 < 0 || result_y2 < 0) continue;
 
-//     return displayImage;
+        cv::Point p1(seamPair.s1.x_peak, result_y1);
+        cv::Point p2(seamPair.s2.x_peak, result_y2);
+        cv::line(displayImage, p1, p2, purple, 2, cv::LINE_AA);
+    }
 
-// }
+    return displayImage;
+}
 
 // 画出橘缝曲线
 cv::Mat drawSeam(cv::Mat displayImage, const std::vector<SeamCurveResult>& curves) {
@@ -786,30 +772,36 @@ static double elapsedMs(std::chrono::steady_clock::time_point begin, std::chrono
 
 // 检测主函数
 cv::Mat detectMain(cv::Mat originImage){
-    // cv::Mat displayImage;
-    // std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
-    // std::vector<LaserData> smoothData = smooth(data);
+    cv::Mat displayImage;
+    std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
+    std::vector<LaserData> smoothData = smooth(data);
 
-    // // 获取基线数据，改进激光数据
-    // std::vector<LaserBaselineData> baselineData = getLaserBaselineDistance(smoothData, 80, 0.25);
-    // // saveLaserBaselineCSV(baselineData, vConfig.csv_path + getTimeString() + "_points_baseline.csv");
-    // std::vector<LaserData> seamSignalData = buildSeamSignalData(baselineData);
+    // 获取基线数据，改进激光数据
+    std::vector<LaserBaselineData> baselineData = getLaserBaselineDistance(smoothData, 80, 0.25);
+    // saveLaserBaselineCSV(baselineData, vConfig.csv_path + getTimeString() + "_points_baseline.csv");
+    std::vector<LaserData> seamSignalData = buildSeamSignalData(baselineData);
 
-    // // 传统方法找橘缝
-    // std::vector<MatchedSeamPair> results = findSeam(seamSignalData);
-    // std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
-    // // std::vector<SeamCurveResult> curveResults = traceSeamCurvesByImage(originImage, stableResults, data);
+    // 传统方法找橘缝
+    std::vector<MatchedSeamPair> results = findSeam(seamSignalData);
+    std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
 
-    // // unet找橘缝曲线
-    // std::vector<SeamCurveResult> curveResults = traceSeamCurvesByUnet(originImage, stableResults, data);
-    // cv::Mat finalMat = drawSeam(displayImage, curveResults);
-    // // cv::Mat finalMat = drawSeam(displayImage, stableResults, data);
-    // // cv::Mat finalMat = drawSeam(displayImage, results, data);
+    // unet找橘缝曲线
+    std::vector<SeamCurveResult> curveResults = traceSeamCurvesByUnet(originImage, stableResults, data);
+    cv::Mat finalMat = drawSeam(displayImage, curveResults);
 
-    // // YoloSegTiming yoloTiming;
-    // // finalMat = applyYoloSegToDisplay(originImage, finalMat, stableResults, data, USE_YOLO_LASER_SELECTION, &yoloTiming);
+    // 画出传统线
+    cv::Mat finalMat1 = drawSeam2(originImage, stableResults, smoothData);
+    cv::imshow("finalMat1", finalMat1);
 
-    cv::Mat finalMat = drawUnetSeamProbabilityPoints(originImage, 0.9f, 2);
+    
+
+    // 画可能分瓣线像素点
+    cv::Mat finalMat2 = drawUnetSeamProbabilityPoints(originImage, 0.9f, 2);
+    cv::imshow("finalMat2", finalMat2);
+
+    // yolo找橘缝曲线
+    // YoloSegTiming yoloTiming;
+    // finalMat = applyYoloSegToDisplay(originImage, finalMat, stableResults, data, USE_YOLO_LASER_SELECTION, &yoloTiming);
 
     cv::waitKey(1);
 
