@@ -49,6 +49,10 @@ int screw_motor_move(int addr, float distance){
     }
     float angle = distanceToAngleConvert(addr, distance);
     bool dir = (angle >=0) ? true : false;
+    if(addr == 7){ //电机7用emm代码
+        position_control_emm(addr, rpm, 0, dir, abs(angle), true, false);
+        return 0;
+    }
     position_control_t_x(addr, dir, 1500, 500, rpm, abs(angle), 0, false);
     return 0;
 }

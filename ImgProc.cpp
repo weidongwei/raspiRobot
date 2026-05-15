@@ -395,6 +395,12 @@ static double getQuantile(std::vector<double> values, double quantile) {
     return values[left] * (1.0 - ratio) + values[right] * ratio;
 }
 
+/**
+ * @param data 激光点数据列表；每个点需包含 laser_id、x_pixel、y_pixel 和 distance_cm。
+ * @param halfWindowPixel 基线统计窗口的半宽，单位为 x 方向像素；值越大基线越平滑，但越可能抹掉局部变化。
+ * @param quantile 窗口内距离的分位数，取值范围 0.0 到 1.0；例如 0.25 表示取 25% 分位距离作为局部果面基线。
+ * @return std::vector<LaserBaselineData> 带有原始距离、基线距离和橘缝信号的激光点数据。
+ */
 // 获取两条激光的果面基线距离。baseline_distance 是每个点附近窗口内的低分位数距离曲线。
 std::vector<LaserBaselineData> getLaserBaselineDistance(const std::vector<LaserData>& data, int halfWindowPixel, double quantile) {
     std::vector<LaserBaselineData> baselineData;
@@ -702,9 +708,71 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
 }
 
 
-// 画出两个激光橘缝点的直连线，用于和 U-Net 曲线结果做对比。
+// 画出激光轮廓、激光骨架线，以及两个激光橘缝点的直连线。
 cv::Mat drawSeam2(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data) {
-    if (results.size() < 1) return displayImage;
+    if (displayImage.empty()) return displayImage;
+
+    if (displayImage.channels() == 1) {
+        cv::cvtColor(displayImage, displayImage, cv::COLOR_GRAY2BGR);
+    } else if (displayImage.channels() == 4) {
+        cv::cvtColor(displayImage, displayImage, cv::COLOR_BGRA2BGR);
+    } else {
+        displayImage = displayImage.clone();
+    }
+
+    // 重新跑一遍轻量级激光前端，只用于调试图上标出当前检测到的轮廓。
+    cv::Mat undistortedImg;
+    cv::Mat diff = preprocessLaserImage(displayImage, undistortedImg);
+    std::vector<std::vector<cv::Point>> contours = getLaserContours(diff);
+    for (const auto& contour : contours) {
+        double area = cv::contourArea(contour);
+        if (area > displayImage.cols * displayImage.rows * 0.0002) {
+            cv::drawContours(displayImage, std::vector<std::vector<cv::Point>>{contour}, -1,
+                             cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
+        }
+    }
+
+    // 用传入的 LaserData 按 laser_id 连成骨架线，避免重复抽中心线带来细微差异。
+    std::map<int, std::vector<cv::Point>> skeletonByLaser;
+    for (const auto& row : data) {
+        if (row.x_pixel < 0 || row.x_pixel >= displayImage.cols ||
+            row.y_pixel < 0 || row.y_pixel >= displayImage.rows) {
+            continue;
+        }
+        skeletonByLaser[row.laser_id].push_back(cv::Point(row.x_pixel, row.y_pixel));
+    }
+
+    const cv::Scalar skeletonColor(255, 0, 0);
+    const int maxSkeletonGap = 12;
+
+    for (auto& item : skeletonByLaser) {
+        std::vector<cv::Point>& points = item.second;
+        std::sort(points.begin(), points.end(), [](const cv::Point& a, const cv::Point& b) {
+            if (a.x != b.x) return a.x < b.x;
+            return a.y < b.y;
+        });
+
+        std::vector<cv::Point> segment;
+        for (const auto& point : points) {
+            if (!segment.empty() && point.x - segment.back().x > maxSkeletonGap) {
+                if (segment.size() >= 2) {
+                    cv::polylines(displayImage, std::vector<std::vector<cv::Point>>{segment},
+                                  false, skeletonColor, 1, cv::LINE_AA);
+                }
+                segment.clear();
+            }
+            segment.push_back(point);
+        }
+
+        if (segment.size() >= 2) {
+            cv::polylines(displayImage, std::vector<std::vector<cv::Point>>{segment},
+                          false, skeletonColor, 1, cv::LINE_AA);
+        }
+
+        for (const auto& point : points) {
+            cv::circle(displayImage, point, 1, skeletonColor, -1, cv::LINE_AA);
+        }
+    }
 
     const cv::Scalar purple(255, 0, 255);
     for (const auto& seamPair : results) {
@@ -766,6 +834,193 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<SeamCurveResult>& curve
 
 }
 
+// 实时绘制类似 matplotlib 俯视散点图的激光重建视图。
+cv::Mat showLaserReconstructionView(const std::vector<LaserData>& data,
+                                    const std::vector<LaserPlotTarget>& targets,
+                                    const std::string& windowName,
+                                    bool showWindow) {
+    const int canvasWidth = 900;
+    const int canvasHeight = 680;
+    const cv::Rect plotRect(80, 45, canvasWidth - 125, canvasHeight - 125);
+    cv::Mat canvas(canvasHeight, canvasWidth, CV_8UC3, cv::Scalar(248, 248, 248));
+
+    cv::rectangle(canvas, plotRect, cv::Scalar(255, 255, 255), -1, cv::LINE_AA);
+    cv::rectangle(canvas, plotRect, cv::Scalar(50, 50, 50), 1, cv::LINE_AA);
+    cv::putText(canvas, "Multi-Laser Reconstruction (top view)",
+                cv::Point(plotRect.x, 28), cv::FONT_HERSHEY_SIMPLEX, 0.65,
+                cv::Scalar(30, 30, 30), 2, cv::LINE_AA);
+
+    if (data.empty()) {
+        cv::putText(canvas, "No laser data",
+                    cv::Point(plotRect.x + 20, plotRect.y + plotRect.height / 2),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(80, 80, 80), 2, cv::LINE_AA);
+        if (showWindow) cv::imshow(windowName, canvas);
+        return canvas;
+    }
+
+    double minDist = std::numeric_limits<double>::max();
+    double maxDist = -std::numeric_limits<double>::max();
+    std::set<int> laserIds;
+    for (const auto& row : data) {
+        if (!std::isfinite(row.distance_cm)) continue;
+        minDist = std::min(minDist, row.distance_cm);
+        maxDist = std::max(maxDist, row.distance_cm);
+        laserIds.insert(row.laser_id);
+    }
+
+    if (minDist == std::numeric_limits<double>::max()) {
+        cv::putText(canvas, "No valid distance data",
+                    cv::Point(plotRect.x + 20, plotRect.y + plotRect.height / 2),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(80, 80, 80), 2, cv::LINE_AA);
+        if (showWindow) cv::imshow(windowName, canvas);
+        return canvas;
+    }
+
+    double distRange = maxDist - minDist;
+    if (distRange < 1e-6) distRange = 1.0;
+    double distPad = std::max(0.5, distRange * 0.08);
+    minDist -= distPad;
+    maxDist += distPad;
+
+    auto clamp01 = [](double value) {
+        return std::max(0.0, std::min(1.0, value));
+    };
+
+    auto toPlotPoint = [&](double xPixel, double distanceCm) {
+        double xRatio = clamp01(xPixel / 640.0);
+        double dRatio = clamp01((distanceCm - minDist) / (maxDist - minDist));
+        int x = plotRect.x + static_cast<int>(std::round(xRatio * plotRect.width));
+        int y = plotRect.y + plotRect.height - static_cast<int>(std::round(dRatio * plotRect.height));
+        return cv::Point(x, y);
+    };
+
+    auto laserColor = [](int laserId) {
+        switch (laserId) {
+            case 1: return cv::Scalar(0, 145, 255);
+            case 2: return cv::Scalar(70, 185, 70);
+            case 3: return cv::Scalar(220, 90, 160);
+            case 4: return cv::Scalar(180, 100, 40);
+            default: return cv::Scalar(110, 110, 110);
+        }
+    };
+
+    auto softColor = [](const cv::Scalar& color) {
+        return cv::Scalar(
+            color[0] * 0.45 + 255.0 * 0.55,
+            color[1] * 0.45 + 255.0 * 0.55,
+            color[2] * 0.45 + 255.0 * 0.55
+        );
+    };
+
+    const int gridXCount = 8;
+    for (int i = 0; i <= gridXCount; ++i) {
+        int x = plotRect.x + static_cast<int>(std::round(plotRect.width * i / static_cast<double>(gridXCount)));
+        cv::line(canvas, cv::Point(x, plotRect.y), cv::Point(x, plotRect.y + plotRect.height),
+                 cv::Scalar(225, 225, 225), 1, cv::LINE_AA);
+        int xLabel = static_cast<int>(std::round(640.0 * i / gridXCount));
+        cv::putText(canvas, std::to_string(xLabel), cv::Point(x - 12, plotRect.y + plotRect.height + 24),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.45, cv::Scalar(70, 70, 70), 1, cv::LINE_AA);
+    }
+
+    const int gridYCount = 6;
+    for (int i = 0; i <= gridYCount; ++i) {
+        int y = plotRect.y + static_cast<int>(std::round(plotRect.height * i / static_cast<double>(gridYCount)));
+        cv::line(canvas, cv::Point(plotRect.x, y), cv::Point(plotRect.x + plotRect.width, y),
+                 cv::Scalar(225, 225, 225), 1, cv::LINE_AA);
+        double distLabel = maxDist - (maxDist - minDist) * i / gridYCount;
+        cv::putText(canvas, cv::format("%.1f", distLabel), cv::Point(18, y + 5),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.45, cv::Scalar(70, 70, 70), 1, cv::LINE_AA);
+    }
+
+    cv::putText(canvas, "x_pixel", cv::Point(plotRect.x + plotRect.width / 2 - 28, canvasHeight - 22),
+                cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(50, 50, 50), 1, cv::LINE_AA);
+    cv::putText(canvas, "distance_cm", cv::Point(15, plotRect.y - 12),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(50, 50, 50), 1, cv::LINE_AA);
+
+    std::map<int, std::vector<LaserData>> grouped;
+    for (const auto& row : data) {
+        if (!std::isfinite(row.distance_cm)) continue;
+        grouped[row.laser_id].push_back(row);
+    }
+
+    for (auto& item : grouped) {
+        auto& rows = item.second;
+        std::sort(rows.begin(), rows.end(), [](const LaserData& a, const LaserData& b) {
+            if (a.x_pixel != b.x_pixel) return a.x_pixel < b.x_pixel;
+            return a.y_pixel < b.y_pixel;
+        });
+
+        cv::Scalar pointColor = softColor(laserColor(item.first));
+        cv::Scalar lineColor = softColor(laserColor(item.first));
+        bool hasPrev = false;
+        LaserData prevRow;
+        cv::Point prevPoint;
+        for (const auto& row : rows) {
+            cv::Point point = toPlotPoint(row.x_pixel, row.distance_cm);
+            if (hasPrev && std::abs(row.x_pixel - prevRow.x_pixel) <= 12) {
+                cv::line(canvas, prevPoint, point, lineColor, 1, cv::LINE_AA);
+            }
+            cv::circle(canvas, point, 2, pointColor, -1, cv::LINE_AA);
+            prevRow = row;
+            prevPoint = point;
+            hasPrev = true;
+        }
+    }
+
+    int legendX = plotRect.x + plotRect.width - 130;
+    int legendY = plotRect.y + 22;
+    for (int laserId : laserIds) {
+        cv::circle(canvas, cv::Point(legendX, legendY), 5, laserColor(laserId), -1, cv::LINE_AA);
+        cv::putText(canvas, "Laser " + std::to_string(laserId), cv::Point(legendX + 12, legendY + 5),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.45, cv::Scalar(45, 45, 45), 1, cv::LINE_AA);
+        legendY += 22;
+    }
+
+    for (const auto& target : targets) {
+        const LaserData* best = nullptr;
+        double bestScore = std::numeric_limits<double>::max();
+        for (const auto& row : data) {
+            if (row.laser_id != target.laser_id || !std::isfinite(row.distance_cm)) continue;
+            double score = std::abs(row.x_pixel - target.x_pixel);
+            if (target.use_distance) {
+                score += std::abs(row.distance_cm - target.distance_cm) * 8.0;
+            }
+            if (score < bestScore) {
+                bestScore = score;
+                best = &row;
+            }
+        }
+
+        if (best == nullptr) continue;
+
+        cv::Point markPoint = toPlotPoint(best->x_pixel, best->distance_cm);
+        cv::circle(canvas, markPoint, 8, cv::Scalar(0, 0, 0), 2, cv::LINE_AA);
+        cv::circle(canvas, markPoint, 6, cv::Scalar(0, 0, 255), -1, cv::LINE_AA);
+
+        std::string label = cv::format("ID%d x%d %.1fcm y%d",
+                                      best->laser_id, best->x_pixel, best->distance_cm, best->y_pixel);
+        int baseline = 0;
+        cv::Size textSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.42, 1, &baseline);
+        int labelX = std::min(std::max(markPoint.x + 10, plotRect.x + 4),
+                              plotRect.x + plotRect.width - textSize.width - 8);
+        int labelY = markPoint.y - 10;
+        if (labelY - textSize.height < plotRect.y) labelY = markPoint.y + textSize.height + 14;
+        labelY = std::min(std::max(labelY, plotRect.y + textSize.height + 4),
+                          plotRect.y + plotRect.height - 6);
+
+        cv::Rect labelRect(labelX - 3, labelY - textSize.height - 4,
+                           textSize.width + 6, textSize.height + baseline + 6);
+        cv::rectangle(canvas, labelRect, cv::Scalar(255, 255, 255), -1, cv::LINE_AA);
+        cv::rectangle(canvas, labelRect, cv::Scalar(210, 210, 210), 1, cv::LINE_AA);
+        cv::putText(canvas, label, cv::Point(labelX, labelY),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.42, cv::Scalar(20, 20, 20), 1, cv::LINE_AA);
+    }
+
+    if (showWindow) cv::imshow(windowName, canvas);
+    return canvas;
+}
+
+// 计算
 static double elapsedMs(std::chrono::steady_clock::time_point begin, std::chrono::steady_clock::time_point end) {
     return std::chrono::duration<double, std::milli>(end - begin).count();
 }
@@ -789,15 +1044,23 @@ cv::Mat detectMain(cv::Mat originImage){
     std::vector<SeamCurveResult> curveResults = traceSeamCurvesByUnet(originImage, stableResults, data);
     cv::Mat finalMat = drawSeam(displayImage, curveResults);
 
+    // 画可能分瓣线像素点
+    cv::Mat finalMat2 = drawUnetSeamProbabilityPoints(originImage, 0.9f, 2);
+    cv::imshow("finalMat2", finalMat2);
+
     // 画出传统线
     cv::Mat finalMat1 = drawSeam2(originImage, stableResults, smoothData);
     cv::imshow("finalMat1", finalMat1);
 
-    
+    // 实时查看 x_pixel-distance_cm 俯视重建图，并把当前稳定橘缝点标成红星。
+    std::vector<LaserPlotTarget> laserPlotTargets;
+    for (const auto& seam : stableResults) {
+        laserPlotTargets.push_back(LaserPlotTarget(seam.s1.id, seam.s1.x_peak));
+        laserPlotTargets.push_back(LaserPlotTarget(seam.s2.id, seam.s2.x_peak));
+    }
+    showLaserReconstructionView(smoothData, laserPlotTargets, "Laser Reconstruction", true);
+    showLaserReconstructionView(seamSignalData, laserPlotTargets, "Laser Seam Signal", true);
 
-    // 画可能分瓣线像素点
-    cv::Mat finalMat2 = drawUnetSeamProbabilityPoints(originImage, 0.9f, 2);
-    cv::imshow("finalMat2", finalMat2);
 
     // yolo找橘缝曲线
     // YoloSegTiming yoloTiming;

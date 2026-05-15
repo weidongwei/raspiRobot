@@ -7,8 +7,6 @@
 
 // 预处理函数(去畸变、绿色通道增强及平滑处理)
 cv::Mat preprocessLaserImage(const cv::Mat& input, cv::Mat& undistortedOut) {
-    // 去畸变 (保存 undistortedOut 用于后续绘图)
-    // cv::undistort(input, undistortedOut, vConfig.MycameraMatrix, vConfig.MydistCoeffs);
     undistortedOut = input.clone();
 
     // 通道增强（绿色提取）
@@ -416,6 +414,97 @@ std::vector<std::vector<cv::Point>> getLaserContours(const cv::Mat& diff) {
 
 //     return laser_contours;
 // }
+
+// 上轮廓法提取激光骨架线：每个 x 列取轮廓内部最靠上的 y 作为骨架点。
+std::vector<LaserContour> extractCenterlinePoints2(
+    const std::vector<std::vector<cv::Point>>& contours,
+    const cv::Mat& diff)
+{
+    std::vector<LaserContour> laser_contours;
+
+    for (int i = 0; i < (int)contours.size(); ++i) {
+        cv::Mat mask = cv::Mat::zeros(diff.size(), CV_8U);
+        cv::drawContours(mask, contours, i, cv::Scalar(255), cv::FILLED);
+
+        cv::Rect box = cv::boundingRect(contours[i]);
+        LaserContour lc;
+
+        for (int x = box.x; x < box.x + box.width; ++x) {
+            int upper_y = -1;
+            for (int y = box.y; y < box.y + box.height; ++y) {
+                if (mask.at<uchar>(y, x) > 0) {
+                    upper_y = y;
+                    break;
+                }
+            }
+
+            if (upper_y >= 0) {
+                lc.xs.push_back(x);
+                lc.ys.push_back(upper_y);
+            }
+        }
+
+        if (!lc.ys.empty()) {
+            int window = 5;
+            int radius = window / 2;
+            int max_jump = 2;
+            std::vector<int> filtered = lc.ys;
+
+            for (int j = 0; j < (int)lc.ys.size(); ++j) {
+                int begin = std::max(0, j - radius);
+                int end = std::min((int)lc.ys.size() - 1, j + radius);
+                std::vector<int> local;
+                for (int k = begin; k <= end; ++k) {
+                    local.push_back(lc.ys[k]);
+                }
+
+                size_t mid = local.size() / 2;
+                std::nth_element(local.begin(), local.begin() + mid, local.end());
+                int median_y = local[mid];
+                if (std::abs(lc.ys[j] - median_y) > max_jump) {
+                    filtered[j] = median_y;
+                }
+            }
+
+            if (filtered.size() >= 3) {
+                std::vector<int> smoothed = filtered;
+                for (int j = 1; j < (int)filtered.size() - 1; ++j) {
+                    smoothed[j] = static_cast<int>(std::round(
+                        0.25 * filtered[j - 1] + 0.5 * filtered[j] + 0.25 * filtered[j + 1]));
+                }
+                filtered = smoothed;
+            }
+
+            lc.ys = filtered;
+            double y_sum = 0.0;
+            for (int y : lc.ys) y_sum += y;
+            lc.y_average = y_sum / lc.ys.size();
+            laser_contours.push_back(lc);
+        }
+    }
+
+    int num_found = (int)laser_contours.size();
+    std::cout << "num_found (upper contour) = " << num_found << std::endl;
+
+    if (num_found >= 2) {
+        int idxA = 0, idxB = 1;
+        if (laser_contours[idxA].y_average > laser_contours[idxB].y_average)
+            std::swap(idxA, idxB);
+
+        double refY1 = laser_contours[idxA].y_average;
+        double refY2 = laser_contours[idxB].y_average;
+
+        for (int i = 0; i < num_found; ++i) {
+            double currentY = laser_contours[i].y_average;
+            laser_contours[i].laser_type =
+                (std::abs(currentY - refY1) < std::abs(currentY - refY2)) ? 1 : 2;
+        }
+    } else if (num_found == 1) {
+        laser_contours[0].laser_type = 1;
+    }
+
+    return laser_contours;
+}
 
 // 改进版灰度重心法提取中心线
 std::vector<LaserContour> extractCenterlinePoints(
@@ -1034,7 +1123,7 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
     // 3. 提取中心线坐标
     // 方案B：先把小轮廓合并到上下两条主轮廓
     // auto repairedContours = repairLaserLines(contours);
-    auto lcs = extractCenterlinePoints(contours, diff);
+    auto lcs = extractCenterlinePoints2(contours, diff);
     auto repairedLcs = repairLaserLines(lcs);
 
     // 4. 保存与可视化

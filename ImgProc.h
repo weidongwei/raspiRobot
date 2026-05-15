@@ -124,6 +124,22 @@ struct SeamCurveResult {
 //*********************************************** */
 //*********************************************** */
 
+// 激光重建视图里需要高亮的目标点。只传 laser_id 和 x_pixel 时，
+// 会自动在对应激光线里寻找 x 最接近的真实点。
+// 用于输出激光点图
+struct LaserPlotTarget {
+    int laser_id;
+    int x_pixel;
+    double distance_cm;
+    bool use_distance;
+
+    LaserPlotTarget(int id = 0, int x = 0)
+        : laser_id(id), x_pixel(x), distance_cm(0.0), use_distance(false) {}
+
+    LaserPlotTarget(int id, int x, double distance)
+        : laser_id(id), x_pixel(x), distance_cm(distance), use_distance(true) {}
+};
+
 bool loadVisualConfig(VisualConfig& cfg, const std::string& filename);
 std::string getTimeString();
 std::vector<LaserData> readLaserCSV(const std::string& filename);
@@ -156,7 +172,10 @@ std::vector<int> suppress_peaks(const std::vector<int>& peakIndices, const std::
 std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData);
 cv::Mat drawSeam2(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data);
 cv::Mat drawSeam(cv::Mat displayImage, const std::vector<SeamCurveResult>& curves);
-
+cv::Mat showLaserReconstructionView(const std::vector<LaserData>& data,
+                                    const std::vector<LaserPlotTarget>& targets = {},
+                                    const std::string& windowName = "Laser Reconstruction",
+                                    bool showWindow = true);
 cv::Mat detectMain(cv::Mat originImage);
 
 
