@@ -707,6 +707,56 @@ std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData
     return finalMatchedPairs;
 }
 
+// 将传统方法输出的峰值点改成凹陷区域中心点。
+// findSeam() 仍负责判断候选和配对；这里仅把每条激光线的 x_peak
+// 从局部最高点移动到 left_foot/right_foot 的中点，并吸附到真实激光点 x。
+std::vector<MatchedSeamPair> moveSeamPeaksToRegionCenters(const std::vector<MatchedSeamPair>& results, const std::vector<LaserData>& data) {
+    std::vector<MatchedSeamPair> centeredResults = results;
+
+    auto snapToNearestLaserX = [&](int laserId, int targetX) {
+        bool found = false;
+        int bestX = targetX;
+        int bestDx = 0;
+
+        for (const auto& row : data) {
+            if (row.laser_id != laserId) continue;
+
+            int dx = std::abs(row.x_pixel - targetX);
+            if (!found || dx < bestDx) {
+                found = true;
+                bestDx = dx;
+                bestX = row.x_pixel;
+            }
+        }
+
+        return bestX;
+    };
+
+    auto moveOneSeam = [&](SeamResult& seam) {
+        int left = std::min(seam.left_foot, seam.right_foot);
+        int right = std::max(seam.left_foot, seam.right_foot);
+        if (right <= left) return;
+
+        int centerX = (left + right) / 2;
+        int oldPeak = seam.x_peak;
+        seam.x_peak = snapToNearestLaserX(seam.id, centerX);
+
+        std::cout << "橘缝点由峰值改为区域中心: id=" << seam.id
+                  << ", old_x_peak=" << oldPeak
+                  << ", center_x=" << centerX
+                  << ", snapped_x=" << seam.x_peak
+                  << ", left_foot=" << seam.left_foot
+                  << ", right_foot=" << seam.right_foot
+                  << std::endl;
+    };
+
+    for (auto& pair : centeredResults) {
+        moveOneSeam(pair.s1);
+        moveOneSeam(pair.s2);
+    }
+
+    return centeredResults;
+}
 
 // 画出激光轮廓、激光骨架线，以及两个激光橘缝点的直连线。
 cv::Mat drawSeam2(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data) {
@@ -1032,7 +1082,7 @@ cv::Mat detectMain(cv::Mat originImage){
     std::vector<LaserData> smoothData = smooth(data);
 
     // 获取基线数据，改进激光数据
-    std::vector<LaserBaselineData> baselineData = getLaserBaselineDistance(smoothData, 80, 0.25);
+    std::vector<LaserBaselineData> baselineData = getLaserBaselineDistance(smoothData, 60, 0.25);
     // saveLaserBaselineCSV(baselineData, vConfig.csv_path + getTimeString() + "_points_baseline.csv");
     std::vector<LaserData> seamSignalData = buildSeamSignalData(baselineData);
 

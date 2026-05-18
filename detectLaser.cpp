@@ -1123,7 +1123,7 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
     // 3. 提取中心线坐标
     // 方案B：先把小轮廓合并到上下两条主轮廓
     // auto repairedContours = repairLaserLines(contours);
-    auto lcs = extractCenterlinePoints2(contours, diff);
+    auto lcs = extractCenterlinePoints(contours, diff);
     auto repairedLcs = repairLaserLines(lcs);
 
     // 4. 保存与可视化
