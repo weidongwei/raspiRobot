@@ -11,11 +11,11 @@
 // 总开关：false 时不加载 U-Net，曲线会退回传统端点直线兜底。
 static const bool UNET_SEAM_ENABLE = true;
 // 树莓派部署时优先加载的 ONNX 路径。
-static const char* UNET_MODEL_PATH_PRIMARY = "/home/dw/robot/cpp/best_unet.onnx";
+static const char* UNET_MODEL_PATH_PRIMARY = "/home/dw/robot/cpp/best_unet_small.onnx";
 // 本地/相对路径兜底，方便在项目目录中直接运行。
-static const char* UNET_MODEL_PATH_FALLBACK = "cpp/best_unet.onnx";
+static const char* UNET_MODEL_PATH_FALLBACK = "cpp/best_unet_small.onnx";
 // 模型固定输入尺寸；必须和 train3/export_onnx.py 导出的尺寸一致。
-static const int UNET_INPUT_SIZE = 320;
+static const int UNET_INPUT_SIZE = 192;
 // DP 追线时，端点连线左右额外扩展的搜索宽度。越大越能跟弯曲线，但越容易跑偏。
 static const int UNET_ROI_X_MARGIN = 80;
 // DP 追线时，端点上下额外扩展的搜索高度，主要避免端点贴边导致裁剪过紧。
@@ -49,6 +49,50 @@ static int clampIntUnet(int value, int minValue, int maxValue) {
     if (value < minValue) return minValue;
     if (value > maxValue) return maxValue;
     return value;
+}
+
+struct LastUnetProbabilityCache {
+    bool valid = false;
+    const uchar* imageData = nullptr;
+    int rows = 0;
+    int cols = 0;
+    int type = 0;
+    cv::Rect roi;
+    cv::Mat probability;
+};
+
+static LastUnetProbabilityCache& getLastUnetProbabilityCache() {
+    static LastUnetProbabilityCache cache;
+    return cache;
+}
+
+static void storeLastUnetProbability(const cv::Mat& image, const cv::Rect& roi, const cv::Mat& probability) {
+    LastUnetProbabilityCache& cache = getLastUnetProbabilityCache();
+    cache.valid = !image.empty() && !roi.empty();
+    cache.imageData = image.data;
+    cache.rows = image.rows;
+    cache.cols = image.cols;
+    cache.type = image.type();
+    cache.roi = roi;
+    cache.probability = probability;
+}
+
+static bool takeLastUnetProbability(const cv::Mat& image, const cv::Rect& roi, cv::Mat& probability) {
+    LastUnetProbabilityCache& cache = getLastUnetProbabilityCache();
+    bool matched = cache.valid &&
+                   cache.imageData == image.data &&
+                   cache.rows == image.rows &&
+                   cache.cols == image.cols &&
+                   cache.type == image.type() &&
+                   cache.roi.x == roi.x &&
+                   cache.roi.y == roi.y &&
+                   cache.roi.width == roi.width &&
+                   cache.roi.height == roi.height;
+    if (matched) {
+        probability = cache.probability;
+    }
+    cache.valid = false;
+    return matched;
 }
 
 // 检查模型文件是否存在；用于优先加载树莓派部署路径，失败后尝试本地相对路径。
@@ -219,7 +263,12 @@ cv::Mat drawUnetSeamProbabilityPoints(
     cv::Mat display = makeBgrDisplayImageUnet(originImage);
     if (display.empty()) return display;
 
-    cv::Mat probability = inferUnetProbability(originImage);
+    cv::Rect fullImageRoi(0, 0, originImage.cols, originImage.rows);
+    cv::Mat probability;
+    bool reusedProbability = takeLastUnetProbability(originImage, fullImageRoi, probability);
+    if (!reusedProbability) {
+        probability = inferUnetProbability(originImage);
+    }
     if (probability.empty()) return display;
 
     threshold = std::min(1.0f, std::max(0.0f, threshold));
@@ -245,6 +294,7 @@ cv::Mat drawUnetSeamProbabilityPoints(
               << ", min=" << minProb
               << ", max=" << maxProb
               << ", points=" << pointCount
+              << ", reused=" << (reusedProbability ? "true" : "false")
               << std::endl;
 
     return display;
@@ -262,7 +312,7 @@ bool saveUnetSeamProbabilityPoints(
     return cv::imwrite(outputPath, display);
 }
 
-// 按训练时的预处理方式构造输入 blob：BGR->RGB、resize 320、0~1、ImageNet mean/std。
+// 按训练时的预处理方式构造输入 blob：BGR->RGB、resize 到模型输入尺寸、0~1、ImageNet mean/std。
 static cv::Mat makeUnetBlob(const cv::Mat& image) {
     cv::Mat bgr;
     if (image.channels() == 4) {
@@ -291,7 +341,7 @@ static cv::Mat makeUnetBlob(const cv::Mat& image) {
     return cv::dnn::blobFromImage(normalized, 1.0, cv::Size(UNET_INPUT_SIZE, UNET_INPUT_SIZE), cv::Scalar(), false, false);
 }
 
-// 执行 U-Net 推理并把 320x320 输出恢复到原图尺寸。返回值是每个像素属于橘缝的概率。
+// 执行 U-Net 推理并把模型输出恢复到输入图尺寸。返回值是每个像素属于橘缝的概率。
 static cv::Mat inferUnetProbability(const cv::Mat& image) {
     cv::dnn::Net* net = getUnetNet();
     if (net == nullptr || image.empty()) return {};
@@ -302,7 +352,9 @@ static cv::Mat inferUnetProbability(const cv::Mat& image) {
         cv::Mat output = net->forward();
 
         if (output.total() != static_cast<size_t>(UNET_INPUT_SIZE * UNET_INPUT_SIZE)) {
-            std::cerr << "[U-Net] 输出尺寸不符合预期，使用端点直线兜底。" << std::endl;
+            std::cerr << "[U-Net] 输出尺寸不符合预期，期望 "
+                      << UNET_INPUT_SIZE << "x" << UNET_INPUT_SIZE
+                      << "，使用端点直线兜底。" << std::endl;
             return {};
         }
 
@@ -666,6 +718,8 @@ std::vector<SeamCurveResult> traceSeamCurvesByUnet(
     if (originImage.empty()) return curves;
 
     cv::Mat probability = inferUnetProbability(originImage);
+    cv::Rect fullImageRoi(0, 0, originImage.cols, originImage.rows);
+    storeLastUnetProbability(originImage, fullImageRoi, probability);
     std::vector<SeamCurveResult> fullCurves = extractFullUnetCurves(probability);
 
     if (seamPairs.empty()) {

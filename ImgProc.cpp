@@ -1078,6 +1078,7 @@ static double elapsedMs(std::chrono::steady_clock::time_point begin, std::chrono
 // 检测主函数
 cv::Mat detectMain(cv::Mat originImage){
     cv::Mat displayImage;
+    auto s1 = std::chrono::steady_clock::now();
     std::vector<LaserData> data = detectLaserCenter(originImage, &displayImage);
     std::vector<LaserData> smoothData = smooth(data);
 
@@ -1089,9 +1090,25 @@ cv::Mat detectMain(cv::Mat originImage){
     // 传统方法找橘缝
     std::vector<MatchedSeamPair> results = findSeam(seamSignalData);
     std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
+    auto s2 = std::chrono::steady_clock::now();
+    if (PRINT_DETECT_TIMING) {
+        std::cout << "[Timing] 传统算法耗时: "
+                  << std::fixed << std::setprecision(2)
+                  << elapsedMs(s1, s2) << " ms"
+                  << std::endl;
+    }
 
     // unet找橘缝曲线
+    auto unetTraceStart = std::chrono::steady_clock::now();
     std::vector<SeamCurveResult> curveResults = traceSeamCurvesByUnet(originImage, stableResults, data);
+    auto unetTraceEnd = std::chrono::steady_clock::now();
+    if (PRINT_DETECT_TIMING) {
+        std::cout << "[Timing] U-Net 橘缝曲线算法耗时: "
+                  << std::fixed << std::setprecision(2)
+                  << elapsedMs(unetTraceStart, unetTraceEnd) << " ms"
+                  << ", curves=" << curveResults.size()
+                  << std::endl;
+    }
     cv::Mat finalMat = drawSeam(displayImage, curveResults);
 
     // 画可能分瓣线像素点
