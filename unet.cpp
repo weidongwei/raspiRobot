@@ -11,11 +11,11 @@
 // 总开关：false 时不加载 U-Net，曲线会退回传统端点直线兜底。
 static const bool UNET_SEAM_ENABLE = true;
 // 树莓派部署时优先加载的 ONNX 路径。
-static const char* UNET_MODEL_PATH_PRIMARY = "/home/dw/robot/cpp/best_unet_small.onnx";
+static const char* UNET_MODEL_PATH_PRIMARY = "/home/dw/robot/cpp/best_unet_320.onnx";
 // 本地/相对路径兜底，方便在项目目录中直接运行。
-static const char* UNET_MODEL_PATH_FALLBACK = "cpp/best_unet_small.onnx";
+static const char* UNET_MODEL_PATH_FALLBACK = "cpp/best_unet_320.onnx";
 // 模型固定输入尺寸；必须和 train3/export_onnx.py 导出的尺寸一致。
-static const int UNET_INPUT_SIZE = 192;
+static const int UNET_INPUT_SIZE = 320;
 // DP 追线时，端点连线左右额外扩展的搜索宽度。越大越能跟弯曲线，但越容易跑偏。
 static const int UNET_ROI_X_MARGIN = 80;
 // DP 追线时，端点上下额外扩展的搜索高度，主要避免端点贴边导致裁剪过紧。
