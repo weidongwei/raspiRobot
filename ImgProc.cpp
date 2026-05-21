@@ -173,7 +173,7 @@ int cctv(int camera_id){
 
 // 实时检测图像
 int takeVedio(){
-    cv::VideoCapture cap(0, cv::CAP_V4L2);
+    cv::VideoCapture cap(4, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {

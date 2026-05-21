@@ -10,7 +10,7 @@
 
 unet_192                85ms    9分
 unet_320                210ms   10分
-unet_lite_192           40ms    3分
+unet_lite_192           45ms    4分
 unet_lite_320           100ms   9.5分
 
 unet_small_192          45ms    8.5分
@@ -18,6 +18,8 @@ unet_small_320          100ms   9分
 unet_small_lite_192     35ms    5分
 unet_small_lite_320     70ms    7分
 
+fastscnn_192            20ms    3分
+fastscnn_320            35ms    2分
 
 
 26.1.30 通过平滑数据前后丢失的五像素的恢复，解决了检测出的橘缝与实际橘缝有偏移。
