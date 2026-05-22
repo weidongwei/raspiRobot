@@ -8,7 +8,7 @@
 #include "ImgProc.h"
 
 // 使用整图 U-Net 概率图和双激光端点追踪橘缝曲线。
-// 两个激光点之间、激光点上方、激光点下方都使用同一套概率图 DP 追线。
+// 优先选完整 U-Net 候选线并只做 x 方向平移；失败时再退回端点 DP 追线。
 std::vector<SeamCurveResult> traceSeamCurvesByUnet(
     const cv::Mat& originImage,
     const std::vector<MatchedSeamPair>& seamPairs,

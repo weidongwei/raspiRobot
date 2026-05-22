@@ -23,7 +23,7 @@ static const int UNET_ROI_Y_MARGIN = 8;
 // 两个端点 y 差小于该值时认为跨度太短，不做 DP 追线。
 static const int UNET_MIN_VERTICAL_SPAN = 8;
 // DP 每向下一行允许的最大横向跳动像素。越大曲线越灵活，越小曲线越平滑。
-static const int UNET_MAX_X_STEP_PER_ROW = 6;
+static const int UNET_MAX_X_STEP_PER_ROW = 10;
 // DP 横向跳动惩罚权重，用来抑制曲线突然左右跳。
 static const double UNET_TRANSITION_WEIGHT = 0.03;
 // DP 直线先验权重，用来防止路径跑到 ROI 边缘的孤立高概率点。
@@ -39,7 +39,19 @@ static const int UNET_FULL_CURVE_MIN_POINTS = 12;
 // 最多保留的完整候选曲线数量，防止噪声过多拖慢后续匹配。
 static const int UNET_FULL_CURVE_MAX_COUNT = 12;
 // 两个激光锚点到候选完整曲线的平均距离门限，超过则认为该候选不匹配。
-static const double UNET_FULL_CURVE_ANCHOR_GATE = 80.0;
+static const double UNET_FULL_CURVE_ANCHOR_GATE = 40.0;
+// 用传统激光点校准完整 U-Net 曲线时，在目标 y 附近取 x 的窗口。
+static const int UNET_SHIFT_Y_WINDOW = 12;
+// 如果候选曲线离激光点所在 y 太远，则不参与横向平移匹配。
+static const int UNET_SHIFT_MAX_Y_GAP = 24;
+// 完整曲线只允许做 x 方向整体平移；超过该值认为候选线不可信。
+static const double UNET_SHIFT_MAX_ABS_DX = 60.0;
+// 上下两个激光点估计出的横向偏移差太大时，不做刚性平移。
+static const double UNET_SHIFT_MAX_DX_DELTA = 35.0;
+// 候选评分里对上下偏移不一致的惩罚权重。
+static const double UNET_SHIFT_DX_DELTA_WEIGHT = 1.5;
+// 候选评分里对 U-Net 曲线平均低概率的惩罚权重。
+static const double UNET_SHIFT_MEAN_COST_WEIGHT = 20.0;
 
 // 前向声明：执行 U-Net ONNX 推理并返回与原图同尺寸的 0~1 概率图。
 static cv::Mat inferUnetProbability(const cv::Mat& image);
@@ -572,6 +584,148 @@ static double curveAnchorCostUnet(const std::vector<cv::Point>& curve, cv::Point
     return 0.5 * (d1 + d2);
 }
 
+struct ShiftEstimateUnet {
+    bool valid = false;
+    double dx = 0.0;
+    double dx1 = 0.0;
+    double dx2 = 0.0;
+    double cost = 0.0;
+};
+
+// 在指定 y 附近估计候选曲线的 x。只用于 x 方向校准，不修改曲线的 y。
+static bool findCurveXAtYUnet(
+    const std::vector<cv::Point>& curve,
+    int targetY,
+    double& xAtY
+) {
+    if (curve.empty()) return false;
+
+    int bestDy = std::numeric_limits<int>::max();
+    int bestX = 0;
+    double weightedX = 0.0;
+    double weightSum = 0.0;
+
+    for (const auto& point : curve) {
+        int dy = std::abs(point.y - targetY);
+        if (dy < bestDy) {
+            bestDy = dy;
+            bestX = point.x;
+        }
+
+        if (dy <= UNET_SHIFT_Y_WINDOW) {
+            double weight = 1.0 / static_cast<double>(dy + 1);
+            weightedX += point.x * weight;
+            weightSum += weight;
+        }
+    }
+
+    if (weightSum > 0.0) {
+        xAtY = weightedX / weightSum;
+        return true;
+    }
+
+    if (bestDy <= UNET_SHIFT_MAX_Y_GAP) {
+        xAtY = bestX;
+        return true;
+    }
+
+    return false;
+}
+
+// 根据两个传统激光锚点估计完整 U-Net 候选曲线需要做的整体 x 平移。
+static ShiftEstimateUnet estimateCurveShiftXUnet(
+    const std::vector<cv::Point>& curve,
+    cv::Point p1,
+    cv::Point p2
+) {
+    ShiftEstimateUnet estimate;
+    double curveX1 = 0.0;
+    double curveX2 = 0.0;
+
+    if (!findCurveXAtYUnet(curve, p1.y, curveX1)) return estimate;
+    if (!findCurveXAtYUnet(curve, p2.y, curveX2)) return estimate;
+
+    estimate.dx1 = static_cast<double>(p1.x) - curveX1;
+    estimate.dx2 = static_cast<double>(p2.x) - curveX2;
+    estimate.dx = 0.5 * (estimate.dx1 + estimate.dx2);
+
+    double dxDelta = std::abs(estimate.dx1 - estimate.dx2);
+    if (std::abs(estimate.dx) > UNET_SHIFT_MAX_ABS_DX) return estimate;
+    if (dxDelta > UNET_SHIFT_MAX_DX_DELTA) return estimate;
+
+    estimate.cost = std::abs(estimate.dx1)
+                  + std::abs(estimate.dx2)
+                  + dxDelta * UNET_SHIFT_DX_DELTA_WEIGHT;
+    estimate.valid = true;
+    return estimate;
+}
+
+// 只做 x 方向整体平移，y 坐标保持 U-Net 完整曲线原样。
+static std::vector<cv::Point> shiftCurveXUnet(
+    const std::vector<cv::Point>& curve,
+    double dx,
+    const cv::Size& imageSize
+) {
+    std::vector<cv::Point> shifted;
+    shifted.reserve(curve.size());
+
+    int roundedDx = static_cast<int>(std::round(dx));
+    for (const auto& point : curve) {
+        int x = clampIntUnet(point.x + roundedDx, 0, imageSize.width - 1);
+        int y = clampIntUnet(point.y, 0, imageSize.height - 1);
+        shifted.push_back(cv::Point(x, y));
+    }
+
+    return shifted;
+}
+
+// 从完整 U-Net 候选线里选出最适合两个传统橘缝点的一条，并只做 x 方向整体平移。
+static bool selectShiftedFullCurveUnet(
+    const std::vector<SeamCurveResult>& fullCurves,
+    const std::vector<bool>& used,
+    cv::Point p1,
+    cv::Point p2,
+    const cv::Size& imageSize,
+    std::vector<cv::Point>& shiftedCurve,
+    double& meanCost,
+    int& selectedIdx
+) {
+    selectedIdx = -1;
+    meanCost = 0.0;
+    shiftedCurve.clear();
+
+    double bestCost = std::numeric_limits<double>::max();
+    ShiftEstimateUnet bestEstimate;
+
+    for (int i = 0; i < static_cast<int>(fullCurves.size()); ++i) {
+        if (i < static_cast<int>(used.size()) && used[i]) continue;
+
+        ShiftEstimateUnet estimate = estimateCurveShiftXUnet(fullCurves[i].curve_points, p1, p2);
+        if (!estimate.valid) continue;
+
+        double cost = estimate.cost + fullCurves[i].mean_cost * UNET_SHIFT_MEAN_COST_WEIGHT;
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestEstimate = estimate;
+            selectedIdx = i;
+        }
+    }
+
+    if (selectedIdx < 0) return false;
+
+    shiftedCurve = shiftCurveXUnet(fullCurves[selectedIdx].curve_points, bestEstimate.dx, imageSize);
+    meanCost = fullCurves[selectedIdx].mean_cost;
+
+    std::cout << "[U-Net] 使用完整候选线横向平移: idx=" << selectedIdx
+              << ", dx=" << bestEstimate.dx
+              << ", dx1=" << bestEstimate.dx1
+              << ", dx2=" << bestEstimate.dx2
+              << ", cost=" << bestCost
+              << std::endl;
+
+    return shiftedCurve.size() >= 2;
+}
+
 // 拼接上/中/下三段曲线；如果相邻段首尾相同，则跳过重复端点。
 static void appendCurveSegmentUnet(std::vector<cv::Point>& dst, const std::vector<cv::Point>& segment) {
     if (segment.empty()) return;
@@ -706,7 +860,8 @@ static std::vector<SeamCurveResult> extractFullUnetCurves(const cv::Mat& probabi
     return curves;
 }
 
-// 主入口：传统双激光结果给出锚点，U-Net 概率图负责追踪中间及上下延伸的整条曲线。
+// 主入口：传统双激光结果给出锚点，优先用完整 U-Net 候选线做 x 方向校准。
+// 如果候选线和平移约束不可信，再退回端点 DP 追线。
 std::vector<SeamCurveResult> traceSeamCurvesByUnet(
     const cv::Mat& originImage,
     const std::vector<MatchedSeamPair>& seamPairs,
@@ -744,6 +899,25 @@ std::vector<SeamCurveResult> traceSeamCurvesByUnet(
         if (!hasP1 || !hasP2) {
             result.fallback_to_line = true;
             std::cout << "[U-Net] 找不到橘缝端点对应的激光 y，跳过该条曲线。" << std::endl;
+            curves.push_back(result);
+            continue;
+        }
+
+        int shiftedIdx = -1;
+        if (selectShiftedFullCurveUnet(
+                fullCurves,
+                used,
+                p1,
+                p2,
+                originImage.size(),
+                result.curve_points,
+                result.mean_cost,
+                shiftedIdx
+            )) {
+            result.fallback_to_line = false;
+            if (shiftedIdx >= 0 && shiftedIdx < static_cast<int>(used.size())) {
+                used[shiftedIdx] = true;
+            }
             curves.push_back(result);
             continue;
         }

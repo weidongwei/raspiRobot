@@ -59,7 +59,7 @@ struct SeamCandidate {
     bool hasPair   = false;
 
     // 匹配门限（像素）：测量 x 与预测 x 之差超过此值不视为同一条线
-    double gate = 30.0;
+    double gate = 10.0;
 
     void   recordHit(bool hit);  // 记录本帧命中情况，更新投票窗口
     bool   isAlive()  const;     // 轨迹是否仍然存活
