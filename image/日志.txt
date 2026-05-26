@@ -9,9 +9,16 @@
 
 
 unet_192                85ms    9分
-unet_320                210ms   10分
+unet_320                210ms   10分        epoch=120 train_loss=0.8953 train_dice=0.8869 val_loss=1.1340 val_dice=0.5935 val_iou=0.4326
 unet_lite_192           45ms    4分
-unet_lite_320           100ms   9.5分
+unet_lite_320           100ms   9.5分       epoch=120 train_loss=0.8896 train_dice=0.8042 val_loss=1.0843 val_dice=0.5510 val_iou=0.3900
+unet_lite2_192          45ms    7分         epoch=120 train_loss=0.7985 train_dice=0.7424 val_loss=1.0059 val_dice=0.5141 val_iou=0.3586
+unet_lite2_256          70ms    9分         epoch=120 train_loss=0.7665 train_dice=0.8111 val_loss=1.0109 val_dice=0.5385 val_iou=0.3811
+unet_lite2_320          100ms   9.5分       epoch=120 train_loss=0.7633 train_dice=0.8382 val_loss=1.0157 val_dice=0.5452 val_iou=0.3864 
+unet_lite3_320          110ms   9.5分       epoch=118 train_loss=0.8736 train_dice=0.8215 val_loss=1.0864 val_dice=0.5513 val_iou=0.3921
+unet_lite4_320          100ms   9.5分       epoch=120 train_loss=0.9423 train_dice=0.8254 val_loss=1.1305 val_dice=0.5658 val_iou=0.4060
+unet_lite5_320          95ms    8分         epoch=114 train_loss=0.9996 train_dice=0.8002 val_loss=1.2108 val_dice=0.5575 val_iou=0.3978
+unet_lite6_320          95ms    9.5分       epoch=145 train_loss=1.0906 train_dice=0.8615 val_loss=1.5927 val_dice=0.5774 val_iou=0.4161    做了200epoch
 
 unet_small_192          45ms    8.5分
 unet_small_320          100ms   9分
@@ -20,6 +27,8 @@ unet_small_lite_320     70ms    7分
 
 fastscnn_192            20ms    3分
 fastscnn_320            35ms    2分
+
+original_unet           3000ms  2分
 
 
 26.1.30 通过平滑数据前后丢失的五像素的恢复，解决了检测出的橘缝与实际橘缝有偏移。
@@ -32,3 +41,9 @@ fastscnn_320            35ms    2分
 26.5.12 尝试使用unet算法，最后画直线的方式改成unet预测橘缝像素点再做动态规划找曲线。延迟190ms
 26.5.20 使用轻量化unet算法，上方标注了各个版本的unet算法耗时和准确率。将激光直射橘子可以避免激光线断裂
 26.5.22 将橘缝点作为起始点和必过点改成预测分瓣线平移到橘缝点附近
+26.5.23 设备上增加了遮光布和灯条，学习了mobileNet核心思想深度可分离卷积
+26.5.25 unet_lite2在bottleneck feature后加入方向感卷积模块(1x7 depthwise conv)。
+        unet_lite3在encoder最后一层下采样改成空洞卷积。
+        unet_lite4在decoder中把浅层skip connection里被压缩掉的通道适当放宽，让decoder拿到更多边缘、纹理和位置信息。
+        unet_lite5在decoder加boundary辅助输出。模型除了预测橘缝 mask，再额外预测一张“边界图”。训练时用边界图监督 decoder 学会更精确地恢复细线边缘；推理时可以只用主 mask 输出，不用边界输出。
+        unet_lite6在decoder中使用Deep supervision，deep supervision强制中间层也学会预测橘缝。

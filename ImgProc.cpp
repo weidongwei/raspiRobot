@@ -173,7 +173,7 @@ int cctv(int camera_id){
 
 // 实时检测图像
 int takeVedio(){
-    cv::VideoCapture cap(4, cv::CAP_V4L2);
+    cv::VideoCapture cap(2, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
@@ -228,7 +228,7 @@ int takeVedio(){
 int takePic(){
     std::string filename  = "origin_" + getTimeString() + ".jpg";
     std::string save_path = vConfig.origin_img_path + filename;
-    cv::VideoCapture cap(0, cv::CAP_V4L2);
+    cv::VideoCapture cap(2, cv::CAP_V4L2);
     // cv::VideoCapture cap;
     // cap.open(0, cv::CAP_V4L2);
     if (!cap.isOpened()) {
@@ -264,7 +264,7 @@ int takePic(){
     cv::waitKey(10);
     cv::imwrite(save_path, frame);
     std::cout << "图像已保存到 " << save_path << std::endl;
-    sleep(1000);
+    sleep(3);
 
     cap.release();
     cv::destroyAllWindows();

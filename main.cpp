@@ -193,6 +193,9 @@ int main(int argc, char *argv[]){
             setLaserStatus(true);
             wakeupThreadWait(THR_LASER_CONTROL);
             takePic();
+            setLaserStatus(false);
+            sleep(1);
+            takePic();
         }
 
         else if(strcmp(argv[1], "cctvthread")==0){
