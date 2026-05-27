@@ -592,37 +592,59 @@ SeamResult analyzeSeamStructure(const std::vector<LaserData>& data, int peakIdx)
 std::vector<MatchedSeamPair> findSeam(const std::vector<LaserData>& smoothedData) {
     int n = smoothedData.size();
     if (n < 15) return {};
-    // 初选极大值
-    std::vector<int> rawPeakIndices;
-    for (int i = 2; i < n - 2; ++i) {
-        if (smoothedData[i].distance_cm >= smoothedData[i-1].distance_cm &&
-            smoothedData[i].distance_cm >= smoothedData[i-2].distance_cm &&
-            smoothedData[i].distance_cm >= smoothedData[i+1].distance_cm &&
-            smoothedData[i].distance_cm >= smoothedData[i+2].distance_cm) {
-            rawPeakIndices.push_back(i);
-        }
-    }
-    // 调用峰值竞争函数
-    std::vector<int> clearPeaks = suppress_peaks(rawPeakIndices, smoothedData);
-    
+
     // 保存所有凹陷结果
     std::map<int, std::vector<SeamResult>> groupResults;
-    for (int p_idx : clearPeaks) {
-        // 调用趋势坍塌分析函数
-        SeamResult current = analyzeSeamStructure(smoothedData, p_idx);
-        // 只保留中间区域的橘缝
-        if(current.x_peak>120 && current.x_peak<520){
-            groupResults[current.id].push_back(current);
-            std::cout << std::fixed << std::setprecision(2);
-            std::cout << "检测到橘缝:id=" << current.id 
-                 << ", x_peak=" << current.x_peak 
-                 << ", dist=" << current.dist << " cm"
-                 << ", left_foot=" << current.left_foot 
-                 << ", right_foot=" << current.right_foot 
-                 << ", width=" << current.width 
-                 << ", depth=" << current.depth << " cm"
-                 << ", score=" << current.score 
-                 << std::endl;
+
+    // 每条激光线头尾容易受球面边缘、断线和基线边界影响，跳过端点附近点后再找峰。
+    const int endpointSkip = 30;
+    std::map<int, std::vector<LaserData>> groupedData;
+    for (const auto& row : smoothedData) {
+        groupedData[row.laser_id].push_back(row);
+    }
+
+    for (auto& item : groupedData) {
+        std::vector<LaserData>& rows = item.second;
+        std::sort(rows.begin(), rows.end(), [](const LaserData& a, const LaserData& b) {
+            return a.x_pixel < b.x_pixel;
+        });
+
+        int m = rows.size();
+        int beginIdx = std::max(2, endpointSkip);
+        int endIdx = m - std::max(2, endpointSkip);
+        if (m < 15 || beginIdx >= endIdx) continue;
+
+        // 初选极大值
+        std::vector<int> rawPeakIndices;
+        for (int i = beginIdx; i < endIdx; ++i) {
+            if (rows[i].distance_cm >= rows[i-1].distance_cm &&
+                rows[i].distance_cm >= rows[i-2].distance_cm &&
+                rows[i].distance_cm >= rows[i+1].distance_cm &&
+                rows[i].distance_cm >= rows[i+2].distance_cm) {
+                rawPeakIndices.push_back(i);
+            }
+        }
+
+        // 调用峰值竞争函数
+        std::vector<int> clearPeaks = suppress_peaks(rawPeakIndices, rows);
+
+        for (int p_idx : clearPeaks) {
+            // 调用趋势坍塌分析函数
+            SeamResult current = analyzeSeamStructure(rows, p_idx);
+            // 只保留中间区域的橘缝
+            if(current.x_peak>120 && current.x_peak<520){
+                groupResults[current.id].push_back(current);
+                std::cout << std::fixed << std::setprecision(2);
+                std::cout << "检测到橘缝:id=" << current.id
+                     << ", x_peak=" << current.x_peak
+                     << ", dist=" << current.dist << " cm"
+                     << ", left_foot=" << current.left_foot
+                     << ", right_foot=" << current.right_foot
+                     << ", width=" << current.width
+                     << ", depth=" << current.depth << " cm"
+                     << ", score=" << current.score
+                     << std::endl;
+            }
         }
     }
 
@@ -1083,13 +1105,13 @@ cv::Mat detectMain(cv::Mat originImage){
     std::vector<LaserData> smoothData = smooth(data);
 
     // 获取基线数据，改进激光数据
-    std::vector<LaserBaselineData> baselineData = getLaserBaselineDistance(smoothData, 60, 0.25);
+    std::vector<LaserBaselineData> baselineData = getLaserBaselineDistance(smoothData, 40, 0.25);
     // saveLaserBaselineCSV(baselineData, vConfig.csv_path + getTimeString() + "_points_baseline.csv");
     std::vector<LaserData> seamSignalData = buildSeamSignalData(baselineData);
 
     // 传统方法找橘缝
     std::vector<MatchedSeamPair> results = findSeam(seamSignalData);
-    std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
+    // std::vector<MatchedSeamPair> stableResults = seamTracker.update(results);
     auto s2 = std::chrono::steady_clock::now();
     if (PRINT_DETECT_TIMING) {
         std::cout << "[Timing] 传统算法耗时: "
@@ -1100,7 +1122,7 @@ cv::Mat detectMain(cv::Mat originImage){
 
     // unet找橘缝曲线
     auto unetTraceStart = std::chrono::steady_clock::now();
-    std::vector<SeamCurveResult> curveResults = traceSeamCurvesByUnet(originImage, stableResults, data);
+    std::vector<SeamCurveResult> curveResults = traceSeamCurvesByUnet(originImage, results, data);
     auto unetTraceEnd = std::chrono::steady_clock::now();
     if (PRINT_DETECT_TIMING) {
         std::cout << "[Timing] U-Net 橘缝曲线算法耗时: "
@@ -1112,16 +1134,16 @@ cv::Mat detectMain(cv::Mat originImage){
     cv::Mat finalMat = drawSeam(displayImage, curveResults);
 
     // 画可能分瓣线像素点
-    cv::Mat finalMat2 = drawUnetSeamProbabilityPoints(originImage, 0.9f, 2);
+    cv::Mat finalMat2 = drawUnetSeamProbabilityPoints(originImage, 0.97f, 1);
     cv::imshow("finalMat2", finalMat2);
 
     // 画出传统线
-    cv::Mat finalMat1 = drawSeam2(originImage, stableResults, smoothData);
+    cv::Mat finalMat1 = drawSeam2(originImage, results, smoothData);
     cv::imshow("finalMat1", finalMat1);
 
     // 实时查看 x_pixel-distance_cm 俯视重建图，并把当前稳定橘缝点标成红星。
     std::vector<LaserPlotTarget> laserPlotTargets;
-    for (const auto& seam : stableResults) {
+    for (const auto& seam : results) {
         laserPlotTargets.push_back(LaserPlotTarget(seam.s1.id, seam.s1.x_peak));
         laserPlotTargets.push_back(LaserPlotTarget(seam.s2.id, seam.s2.x_peak));
     }
@@ -1138,7 +1160,6 @@ cv::Mat detectMain(cv::Mat originImage){
 
     return finalMat;
 }
-
 
 
 

@@ -7,8 +7,8 @@
 
 #include "ImgProc.h"
 
-// 使用整图 U-Net 概率图和双激光端点追踪橘缝曲线。
-// 优先选完整 U-Net 候选线并只做 x 方向平移；失败时再退回端点 DP 追线。
+// 使用传统双激光橘缝点作为硬锚点，在 U-Net 概率图中向上/向下延伸并连接成橘缝曲线。
+// 找不到可靠概率路径时退回两个激光点之间的端点直线。
 std::vector<SeamCurveResult> traceSeamCurvesByUnet(
     const cv::Mat& originImage,
     const std::vector<MatchedSeamPair>& seamPairs,
