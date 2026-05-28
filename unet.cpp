@@ -8,68 +8,74 @@
 #include <limits>
 #include <stdexcept>
 
-// 总开关：false 时不加载 U-Net，曲线会退回传统端点直线兜底。
-static const bool UNET_SEAM_ENABLE = true;
-// 树莓派部署时优先加载的 ONNX 路径。
-static const char* UNET_MODEL_PATH_PRIMARY = "/home/dw/robot/cpp/best_unet_lite6_320.onnx";
-// 本地/相对路径兜底，方便在项目目录中直接运行。
-static const char* UNET_MODEL_PATH_FALLBACK = "cpp/best_unet_lite6_320.onnx";
-// 模型固定输入尺寸；必须和 train3/export_onnx.py 导出的尺寸一致。
-static const int UNET_INPUT_SIZE = 320;
-// DP 追线时，端点连线左右额外扩展的搜索宽度。越大越能跟弯曲线，但越容易跑偏。
-static const int UNET_ROI_X_MARGIN = 80;
-// DP 追线时，端点上下额外扩展的搜索高度，主要避免端点贴边导致裁剪过紧。
-static const int UNET_ROI_Y_MARGIN = 8;
-// 两个端点 y 差小于该值时认为跨度太短，不做 DP 追线。
-static const int UNET_MIN_VERTICAL_SPAN = 8;
-// DP 每向下一行允许的最大横向跳动像素。越大曲线越灵活，越小曲线越平滑。
-static const int UNET_MAX_X_STEP_PER_ROW = 10;
-// DP 横向跳动惩罚权重，用来抑制曲线突然左右跳。
-static const double UNET_TRANSITION_WEIGHT = 0.03;
-// DP 直线先验权重，用来防止路径跑到 ROI 边缘的孤立高概率点。
-static const double UNET_SHAPE_PRIOR_WEIGHT = 0.14;
-// 提取完整候选曲线时的基础概率阈值，不会低于这个值。
-static const float UNET_FULL_CURVE_BASE_THRESHOLD = 0.50f;
-// 提取完整候选曲线时使用的概率分位数；0.97 表示只保留最高约 3% 的概率区域。
-static const double UNET_FULL_CURVE_PERCENTILE = 0.97;
-// 连通域面积小于该值时视为噪声，不作为完整候选曲线。
-static const int UNET_FULL_CURVE_MIN_AREA = 30;
-// 候选曲线中心线点数小于该值时丢弃，避免短碎片干扰。
-static const int UNET_FULL_CURVE_MIN_POINTS = 12;
-// 最多保留的完整候选曲线数量，防止噪声过多拖慢后续匹配。
-static const int UNET_FULL_CURVE_MAX_COUNT = 12;
-// 两个激光锚点到候选完整曲线的平均距离门限，超过则认为该候选不匹配。
-static const double UNET_FULL_CURVE_ANCHOR_GATE = 40.0;
-// 用传统激光点校准完整 U-Net 曲线时，在目标 y 附近取 x 的窗口。
-static const int UNET_SHIFT_Y_WINDOW = 12;
-// 如果候选曲线离激光点所在 y 太远，则不参与横向平移匹配。
-static const int UNET_SHIFT_MAX_Y_GAP = 24;
-// 完整曲线只允许做 x 方向整体平移；超过该值认为候选线不可信。
-static const double UNET_SHIFT_MAX_ABS_DX = 60.0;
-// 上下两个激光点估计出的横向偏移差太大时，不做刚性平移。
-static const double UNET_SHIFT_MAX_DX_DELTA = 35.0;
-// 候选评分里对上下偏移不一致的惩罚权重。
-static const double UNET_SHIFT_DX_DELTA_WEIGHT = 1.5;
-// 候选评分里对 U-Net 曲线平均低概率的惩罚权重。
-static const double UNET_SHIFT_MEAN_COST_WEIGHT = 20.0;
-// 从传统激光锚点向上/向下延伸时，围绕直线外推位置的横向搜索半宽。
-static const int UNET_EXTENSION_X_MARGIN = 85;
-// 从锚点延伸时，连续低于该概率的行会被视为离开了橘缝高置信区域。
-static const float UNET_EXTENSION_ROW_PROB_THRESHOLD = 0.45f;
-// 至少追出多少行才认为一段向外延伸有效，避免锚点附近的短噪声段。
-static const int UNET_EXTENSION_MIN_ROWS = 8;
-// 连续多少行找不到高概率点后停止向外延伸。
-static const int UNET_EXTENSION_LOW_PROB_PATIENCE = 18;
-// 延伸路径对外推直线的约束权重；越大越不容易跑到旁边的橘缝。
-static const double UNET_EXTENSION_SHAPE_PRIOR_WEIGHT = 0.10;
-// 距离激光锚点小于该值时，明显降低 U-Net 概率项权重，避免锚点附近被概率图拉凸。
-static const int UNET_ANCHOR_LOW_PROB_RADIUS = 20;
-// 距离激光锚点超过该值后，恢复正常 U-Net 概率项权重。
-static const int UNET_ANCHOR_FULL_PROB_RADIUS = 60;
-// 锚点附近的最低 U-Net 概率权重；0.20 表示只按正常概率代价的 20% 计算。
-static const double UNET_ANCHOR_MIN_PROB_WEIGHT = 0.20;
-// 锚点附近提高横向连续性惩罚，压住刚离开激光点时的突然外凸。
-static const double UNET_ANCHOR_NEAR_TRANSITION_WEIGHT = 0.08;
+// 模型与开关
+static const bool UNET_SEAM_ENABLE = true; // U-Net 总开关；false 退回传统直线
+static const char* UNET_MODEL_PATH_PRIMARY = "/home/dw/robot/cpp/best_unet_lite6_320.onnx"; // 部署模型；改错会加载失败
+static const char* UNET_MODEL_PATH_FALLBACK = "cpp/best_unet_lite6_320.onnx"; // 本地兜底；改错会失去本地兜底
+static const int UNET_INPUT_SIZE = 320; // 模型输入；必须匹配 ONNX 导出尺寸
+
+// 中段 DP 基础参数
+static const int UNET_ROI_X_MARGIN = 55; // 中段 ROI 半宽；调高更能弯但易串线，调低更稳但易截断
+static const int UNET_MIDDLE_HARD_X_MARGIN = 34; // 默认中段硬半宽；调高更自由，调低更贴传统线
+static const int UNET_ROI_Y_MARGIN = 8; // 端点 y 余量；调高容错更大，调低 ROI 更紧
+static const int UNET_MIN_VERTICAL_SPAN = 8; // 最小 y 跨度；调高少追短线，调低允许短线
+static const int UNET_MAX_X_STEP_PER_ROW = 7; // 默认单行横跳；调高更能弯但易漂，调低更平滑但跟弯弱
+static const double UNET_TRANSITION_WEIGHT = 0.07; // 横跳惩罚；调高更平滑更保守，调低更追概率
+static const double UNET_SHAPE_PRIOR_WEIGHT = 0.32; // 默认中段线先验；调高更贴传统线，调低更信 U-Net
+
+// 全图候选线提取
+static const float UNET_FULL_CURVE_BASE_THRESHOLD = 0.50f; // 全图候选阈值；调高少噪声但易漏，调低多候选但噪声多
+static const double UNET_FULL_CURVE_PERCENTILE = 0.97; // 全图候选分位；调高更严格，调低更宽松
+static const int UNET_FULL_CURVE_MIN_AREA = 30; // 最小连通域；调高滤小噪声，调低保留碎线
+static const int UNET_FULL_CURVE_MIN_POINTS = 12; // 最短候选线；调高少短线，调低多碎片
+static const int UNET_FULL_CURVE_MAX_COUNT = 12; // 最多候选线；调高保留更多但更慢，调低更快但可能漏
+
+// 完整候选线平移匹配
+static const int UNET_SHIFT_Y_WINDOW = 12; // 平移估计 y 窗口；调高更平滑，调低更局部
+static const int UNET_SHIFT_MAX_Y_GAP = 24; // 平移估计最大 y 差；调高容错大，调低更严格
+static const double UNET_SHIFT_MAX_ABS_DX = 60.0; // 最大整体平移；调高允许大偏移，调低拒绝偏离
+static const double UNET_SHIFT_MAX_DX_DELTA = 35.0; // 上下平移差；调高允许倾斜误差，调低更要求一致
+
+// 候选选择代价
+static const double UNET_SELECT_MAX_ANCHOR_ERROR = 12.0; // 平移线最大锚点误差；调高更宽松，调低更准但易退回
+static const double UNET_SELECT_ANCHOR_WEIGHT = 0.035; // 锚点误差权重；调高更信传统点，调低更信曲线形状
+static const double UNET_SELECT_PROB_WEIGHT = 1.00; // 概率代价权重；调高更偏 U-Net 高概率线，调低更偏传统约束
+static const double UNET_SELECT_SHAPE_WEIGHT = 0.45; // 形状偏离权重；调高更贴传统外推，调低更保留 U-Net 形状
+static const double UNET_SELECT_SHAPE_NORM = 60.0; // 形状偏离归一化；调高更宽松，调低更严格
+static const double UNET_SELECT_EDGE_SHIFTED_RATIO = 1.5; // 边缘平移线接受倍率；调高更偏平移线，调低更偏锚点DP
+static const double UNET_SELECT_CENTER_SHIFTED_RATIO = 0.5; // 中心平移线接受倍率；调高更易选平移线，调低更严格
+
+// 上下延伸追线
+static const int UNET_EXTENSION_X_MARGIN = 44; // 默认延伸半宽；调高延伸更自由，调低更贴外推线
+static const float UNET_EXTENSION_ROW_PROB_THRESHOLD = 0.45f; // 延伸行阈值；调高更早停止，调低延伸更长
+static const int UNET_EXTENSION_MIN_ROWS = 8; // 最短延伸；调高少短延伸，调低允许短延伸
+static const int UNET_EXTENSION_LOW_PROB_PATIENCE = 18; // 低概率耐心；调高更不易停，调低更早停
+static const double UNET_EXTENSION_SHAPE_PRIOR_WEIGHT = 0.26; // 默认延伸先验；调高更贴外推线，调低更信 U-Net
+
+// 锚点附近保护
+static const int UNET_ANCHOR_LOW_PROB_RADIUS = 20; // 锚点弱概率半径；调高锚点附近更信传统，调低更早信 U-Net
+static const int UNET_ANCHOR_FULL_PROB_RADIUS = 40; // 概率恢复半径；调高更慢恢复 U-Net，调低更快恢复
+static const double UNET_ANCHOR_MIN_PROB_WEIGHT = 0.20; // 锚点最低概率权重；调高更信锚点附近 U-Net，调低更信传统
+static const double UNET_ANCHOR_NEAR_TRANSITION_WEIGHT = 0.12; // 锚点横跳惩罚；调高锚点附近更直，调低更能弯
+
+// 多橘缝隔离
+static const int UNET_NEIGHBOR_BOUND_MARGIN = 12; // 相邻线隔离余量；调高更防串线但可用区变窄，调低更宽松
+
+// 图像中心自适应权重
+static const double UNET_CENTER_UNET_WEIGHT = 1.00; // 中心 U-Net 权重；调高中心更信 U-Net，调低中心更保守
+static const double UNET_EDGE_UNET_WEIGHT = 0.18; // 边缘 U-Net 权重；调高边缘更追概率，调低边缘更信传统
+static const double UNET_CENTER_TRANSITION_SCALE = 0.85; // 中心横跳倍率；调高中心更平滑，调低中心更灵活
+static const double UNET_EDGE_TRANSITION_SCALE = 2.30; // 边缘横跳倍率；调高边缘更稳，调低边缘更容易漂
+static const double UNET_CENTER_MIDDLE_SHAPE_WEIGHT = 0.22; // 中心中段先验；调高中心更贴直线，调低中心更随 U-Net
+static const double UNET_EDGE_MIDDLE_SHAPE_WEIGHT = 1.00; // 边缘中段先验；调高边缘更贴传统，调低边缘更随 U-Net
+static const double UNET_CENTER_EXTENSION_SHAPE_WEIGHT = 0.18; // 中心延伸先验；调高中心延伸更直，调低更随 U-Net
+static const double UNET_EDGE_EXTENSION_SHAPE_WEIGHT = 0.95; // 边缘延伸先验；调高边缘延伸更贴外推，调低更随 U-Net
+static const int UNET_CENTER_MIDDLE_X_MARGIN = 46; // 中心中段半宽；调高更能弯，调低更防跑偏
+static const int UNET_EDGE_MIDDLE_X_MARGIN = 18; // 边缘中段半宽；调高边缘更自由，调低更防串线
+static const int UNET_CENTER_EXTENSION_X_MARGIN = 58; // 中心延伸半宽；调高延伸更自由，调低更保守
+static const int UNET_EDGE_EXTENSION_X_MARGIN = 20; // 边缘延伸半宽；调高边缘可追弯，调低更防跑偏
+static const int UNET_CENTER_MAX_X_STEP = 9; // 中心单行横跳；调高中心更灵活，调低更平滑
+static const int UNET_EDGE_MAX_X_STEP = 3; // 边缘单行横跳；调高边缘更灵活，调低更稳
 
 // 前向声明：执行 U-Net ONNX 推理并返回与原图同尺寸的 0~1 概率图。
 static cv::Mat inferUnetProbability(const cv::Mat& image);
@@ -107,6 +113,23 @@ struct LastUnetProbabilityCache {
     int type = 0;
     cv::Rect roi;
     cv::Mat probability;
+};
+
+struct UnetTraceXBounds {
+    bool enabled = false;
+    int minX = 0;
+    int maxX = 0;
+};
+
+struct UnetTraceTuning {
+    double centerTrust = 1.0;
+    double unetWeight = 1.0;
+    double transitionWeightScale = 1.0;
+    double middleShapePriorWeight = UNET_SHAPE_PRIOR_WEIGHT;
+    double extensionShapePriorWeight = UNET_EXTENSION_SHAPE_PRIOR_WEIGHT;
+    int middleXMargin = UNET_MIDDLE_HARD_X_MARGIN;
+    int extensionXMargin = UNET_EXTENSION_X_MARGIN;
+    int maxXStepPerRow = UNET_MAX_X_STEP_PER_ROW;
 };
 
 static LastUnetProbabilityCache& getLastUnetProbabilityCache() {
@@ -147,6 +170,140 @@ static bool takeLastUnetProbability(const cv::Mat& image, const cv::Rect& roi, c
 static bool fileExistsUnet(const std::string& path) {
     std::ifstream file(path.c_str());
     return file.good();
+}
+
+static bool clampXRangeToTraceBoundsUnet(int& x0, int& x1, const UnetTraceXBounds* bounds) {
+    if (bounds == nullptr || !bounds->enabled) return x0 <= x1;
+    x0 = std::max(x0, bounds->minX);
+    x1 = std::min(x1, bounds->maxX);
+    return x0 <= x1;
+}
+
+static double clampDoubleUnet(double value, double minValue, double maxValue) {
+    if (value < minValue) return minValue;
+    if (value > maxValue) return maxValue;
+    return value;
+}
+
+static double lerpUnet(double edgeValue, double centerValue, double centerTrust) {
+    centerTrust = clampDoubleUnet(centerTrust, 0.0, 1.0);
+    return edgeValue * (1.0 - centerTrust) + centerValue * centerTrust;
+}
+
+static int lerpIntUnet(int edgeValue, int centerValue, double centerTrust) {
+    return static_cast<int>(std::round(lerpUnet(edgeValue, centerValue, centerTrust)));
+}
+
+static UnetTraceTuning buildTraceTuningForAnchorsUnet(
+    cv::Point p1,
+    cv::Point p2,
+    const cv::Size& imageSize
+) {
+    UnetTraceTuning tuning;
+    if (imageSize.width <= 1) return tuning;
+
+    double seamMidX = 0.5 * (static_cast<double>(p1.x) + static_cast<double>(p2.x));
+    double imageCenterX = 0.5 * static_cast<double>(imageSize.width - 1);
+    double halfWidth = std::max(1.0, imageCenterX);
+    double rawTrust = clampDoubleUnet(1.0 - std::abs(seamMidX - imageCenterX) / halfWidth, 0.0, 1.0);
+    tuning.centerTrust = rawTrust * rawTrust;
+
+    tuning.unetWeight = lerpUnet(UNET_EDGE_UNET_WEIGHT, UNET_CENTER_UNET_WEIGHT, tuning.centerTrust);
+    tuning.transitionWeightScale = lerpUnet(UNET_EDGE_TRANSITION_SCALE, UNET_CENTER_TRANSITION_SCALE, tuning.centerTrust);
+    tuning.middleShapePriorWeight = lerpUnet(
+        UNET_EDGE_MIDDLE_SHAPE_WEIGHT, UNET_CENTER_MIDDLE_SHAPE_WEIGHT, tuning.centerTrust);
+    tuning.extensionShapePriorWeight = lerpUnet(
+        UNET_EDGE_EXTENSION_SHAPE_WEIGHT, UNET_CENTER_EXTENSION_SHAPE_WEIGHT, tuning.centerTrust);
+    tuning.middleXMargin = std::max(1, lerpIntUnet(
+        UNET_EDGE_MIDDLE_X_MARGIN, UNET_CENTER_MIDDLE_X_MARGIN, tuning.centerTrust));
+    tuning.extensionXMargin = std::max(1, lerpIntUnet(
+        UNET_EDGE_EXTENSION_X_MARGIN, UNET_CENTER_EXTENSION_X_MARGIN, tuning.centerTrust));
+    tuning.maxXStepPerRow = std::max(1, lerpIntUnet(
+        UNET_EDGE_MAX_X_STEP, UNET_CENTER_MAX_X_STEP, tuning.centerTrust));
+
+    std::cout << "[U-Net] center tuning: seam_mid_x=" << seamMidX
+              << ", image_center_x=" << imageCenterX
+              << ", raw_trust=" << rawTrust
+              << ", trust=" << tuning.centerTrust
+              << ", unet_w=" << tuning.unetWeight
+              << ", line_w=" << tuning.middleShapePriorWeight
+              << ", mid_margin=" << tuning.middleXMargin
+              << ", ext_margin=" << tuning.extensionXMargin
+              << ", max_step=" << tuning.maxXStepPerRow
+              << std::endl;
+
+    return tuning;
+}
+
+static double seamPairAnchorMidXUnet(const MatchedSeamPair& pair) {
+    return 0.5 * (static_cast<double>(pair.s1.x_peak) + static_cast<double>(pair.s2.x_peak));
+}
+
+static std::vector<UnetTraceXBounds> buildTraceBoundsForPairsUnet(
+    const std::vector<MatchedSeamPair>& seamPairs,
+    const cv::Size& imageSize
+) {
+    std::vector<UnetTraceXBounds> bounds(seamPairs.size());
+    if (seamPairs.size() <= 1 || imageSize.width <= 0) return bounds;
+
+    struct PairCenter {
+        int index = 0;
+        double centerX = 0.0;
+        int minAnchorX = 0;
+        int maxAnchorX = 0;
+    };
+
+    std::vector<PairCenter> centers;
+    centers.reserve(seamPairs.size());
+    for (int i = 0; i < static_cast<int>(seamPairs.size()); ++i) {
+        PairCenter item;
+        item.index = i;
+        item.centerX = seamPairAnchorMidXUnet(seamPairs[i]);
+        item.minAnchorX = std::min(seamPairs[i].s1.x_peak, seamPairs[i].s2.x_peak);
+        item.maxAnchorX = std::max(seamPairs[i].s1.x_peak, seamPairs[i].s2.x_peak);
+        centers.push_back(item);
+    }
+
+    std::sort(centers.begin(), centers.end(), [](const PairCenter& a, const PairCenter& b) {
+        return a.centerX < b.centerX;
+    });
+
+    for (int pos = 0; pos < static_cast<int>(centers.size()); ++pos) {
+        const PairCenter& cur = centers[pos];
+        int leftBound = 0;
+        int rightBound = imageSize.width - 1;
+
+        if (pos > 0) {
+            double splitX = 0.5 * (centers[pos - 1].centerX + cur.centerX);
+            leftBound = static_cast<int>(std::round(splitX)) + UNET_NEIGHBOR_BOUND_MARGIN;
+        }
+        if (pos + 1 < static_cast<int>(centers.size())) {
+            double splitX = 0.5 * (cur.centerX + centers[pos + 1].centerX);
+            rightBound = static_cast<int>(std::round(splitX)) - UNET_NEIGHBOR_BOUND_MARGIN;
+        }
+
+        leftBound = std::min(leftBound, cur.minAnchorX - UNET_NEIGHBOR_BOUND_MARGIN);
+        rightBound = std::max(rightBound, cur.maxAnchorX + UNET_NEIGHBOR_BOUND_MARGIN);
+        leftBound = clampIntUnet(leftBound, 0, imageSize.width - 1);
+        rightBound = clampIntUnet(rightBound, 0, imageSize.width - 1);
+
+        if (leftBound > rightBound) {
+            int center = clampIntUnet(static_cast<int>(std::round(cur.centerX)), 0, imageSize.width - 1);
+            leftBound = clampIntUnet(center - UNET_MIDDLE_HARD_X_MARGIN, 0, imageSize.width - 1);
+            rightBound = clampIntUnet(center + UNET_MIDDLE_HARD_X_MARGIN, 0, imageSize.width - 1);
+        }
+
+        bounds[cur.index].enabled = true;
+        bounds[cur.index].minX = leftBound;
+        bounds[cur.index].maxX = rightBound;
+
+        std::cout << "[U-Net] trace bounds pair=" << cur.index
+                  << ", x=[" << leftBound << "," << rightBound << "]"
+                  << ", center=" << cur.centerX
+                  << std::endl;
+    }
+
+    return bounds;
 }
 
 // 计算概率图的分位数阈值，用来从“全图概率”里自适应取出最高置信度区域。
@@ -442,7 +599,9 @@ static bool traceSingleCurveByProbability(
     cv::Point p1,
     cv::Point p2,
     std::vector<cv::Point>& curvePoints,
-    double& meanCost
+    double& meanCost,
+    const UnetTraceXBounds* xBounds = nullptr,
+    const UnetTraceTuning* tuning = nullptr
 ) {
     if (probability.empty()) return false;
 
@@ -454,8 +613,16 @@ static bool traceSingleCurveByProbability(
 
     if (std::abs(end.y - start.y) < UNET_MIN_VERTICAL_SPAN) return false;
 
-    int x0 = clampIntUnet(std::min(start.x, end.x) - UNET_ROI_X_MARGIN, 0, probability.cols - 1);
-    int x1 = clampIntUnet(std::max(start.x, end.x) + UNET_ROI_X_MARGIN, 0, probability.cols - 1);
+    int middleXMargin = tuning != nullptr ? tuning->middleXMargin : UNET_MIDDLE_HARD_X_MARGIN;
+    int maxXStep = tuning != nullptr ? tuning->maxXStepPerRow : UNET_MAX_X_STEP_PER_ROW;
+    double unetWeight = tuning != nullptr ? tuning->unetWeight : 1.0;
+    double transitionScale = tuning != nullptr ? tuning->transitionWeightScale : 1.0;
+    double shapeWeight = tuning != nullptr ? tuning->middleShapePriorWeight : UNET_SHAPE_PRIOR_WEIGHT;
+    int roiXMargin = std::max(UNET_ROI_X_MARGIN, middleXMargin + maxXStep + 4);
+
+    int x0 = clampIntUnet(std::min(start.x, end.x) - roiXMargin, 0, probability.cols - 1);
+    int x1 = clampIntUnet(std::max(start.x, end.x) + roiXMargin, 0, probability.cols - 1);
+    if (!clampXRangeToTraceBoundsUnet(x0, x1, xBounds)) return false;
     int y0 = clampIntUnet(std::min(start.y, end.y) - UNET_ROI_Y_MARGIN, 0, probability.rows - 1);
     int y1 = clampIntUnet(std::max(start.y, end.y) + UNET_ROI_Y_MARGIN, 0, probability.rows - 1);
     if (x1 <= x0 || y1 <= y0) return false;
@@ -482,12 +649,22 @@ static bool traceSingleCurveByProbability(
         double t = static_cast<double>(y - localStart.y) / std::max(1, localEnd.y - localStart.y);
         double lineX = localStart.x * (1.0 - t) + localEnd.x * t;
         int distanceToAnchor = std::min(y - localStart.y, localEnd.y - y);
-        double probabilityWeight = anchorProbabilityWeightUnet(distanceToAnchor);
-        double transitionWeight = anchorTransitionWeightUnet(distanceToAnchor);
+        double probabilityWeight = anchorProbabilityWeightUnet(distanceToAnchor) * unetWeight;
+        double transitionWeight = anchorTransitionWeightUnet(distanceToAnchor) * transitionScale;
 
-        for (int x = 0; x < probRoi.cols; ++x) {
-            int left = std::max(0, x - UNET_MAX_X_STEP_PER_ROW);
-            int right = std::min(probRoi.cols - 1, x + UNET_MAX_X_STEP_PER_ROW);
+        int rowX0 = clampIntUnet(static_cast<int>(std::round(lineX)) - middleXMargin, 0, probRoi.cols - 1);
+        int rowX1 = clampIntUnet(static_cast<int>(std::round(lineX)) + middleXMargin, 0, probRoi.cols - 1);
+        int globalRowX0 = roiRect.x + rowX0;
+        int globalRowX1 = roiRect.x + rowX1;
+        if (!clampXRangeToTraceBoundsUnet(globalRowX0, globalRowX1, xBounds)) {
+            continue;
+        }
+        rowX0 = globalRowX0 - roiRect.x;
+        rowX1 = globalRowX1 - roiRect.x;
+
+        for (int x = rowX0; x <= rowX1; ++x) {
+            int left = std::max(0, x - maxXStep);
+            int right = std::min(probRoi.cols - 1, x + maxXStep);
             double bestPrev = INF;
             int bestPrevX = -1;
 
@@ -504,7 +681,8 @@ static bool traceSingleCurveByProbability(
             if (bestPrevX < 0) continue;
 
             double probabilityCost = probabilityWeight * (1.0 - static_cast<double>(probRoi.at<float>(y, x)));
-            double shapeCost = UNET_SHAPE_PRIOR_WEIGHT * std::min(1.0, std::abs(x - lineX) / (UNET_ROI_X_MARGIN + 1.0));
+            double offsetRatio = std::min(1.0, std::abs(x - lineX) / (middleXMargin + 1.0));
+            double shapeCost = shapeWeight * offsetRatio * offsetRatio;
             currDp[x] = bestPrev + probabilityCost + shapeCost;
             parent.at<int>(y, x) = bestPrevX;
         }
@@ -540,7 +718,9 @@ static bool traceAnchoredExtensionByProbability(
     int direction,
     double slopeDxPerDy,
     std::vector<cv::Point>& extensionPoints,
-    double& meanCost
+    double& meanCost,
+    const UnetTraceXBounds* xBounds = nullptr,
+    const UnetTraceTuning* tuning = nullptr
 ) {
     extensionPoints.clear();
     meanCost = 0.0;
@@ -554,6 +734,12 @@ static bool traceAnchoredExtensionByProbability(
 
     int maxStep = direction < 0 ? anchor.y : (probability.rows - 1 - anchor.y);
     if (maxStep < UNET_EXTENSION_MIN_ROWS) return false;
+
+    int extensionXMargin = tuning != nullptr ? tuning->extensionXMargin : UNET_EXTENSION_X_MARGIN;
+    int maxXStep = tuning != nullptr ? tuning->maxXStepPerRow : UNET_MAX_X_STEP_PER_ROW;
+    double unetWeight = tuning != nullptr ? tuning->unetWeight : 1.0;
+    double transitionScale = tuning != nullptr ? tuning->transitionWeightScale : 1.0;
+    double shapeWeight = tuning != nullptr ? tuning->extensionShapePriorWeight : UNET_EXTENSION_SHAPE_PRIOR_WEIGHT;
 
     const double INF = std::numeric_limits<double>::max() / 4.0;
     cv::Mat parent(maxStep + 1, probability.cols, CV_32S, cv::Scalar(-1));
@@ -574,11 +760,12 @@ static bool traceAnchoredExtensionByProbability(
         std::fill(currDp.begin(), currDp.end(), INF);
 
         double predictedX = static_cast<double>(anchor.x) + slopeDxPerDy * static_cast<double>(y - anchor.y);
-        double probabilityWeight = anchorProbabilityWeightUnet(step);
-        double transitionWeight = anchorTransitionWeightUnet(step);
-        int x0 = clampIntUnet(static_cast<int>(std::round(predictedX)) - UNET_EXTENSION_X_MARGIN, 0, probability.cols - 1);
-        int x1 = clampIntUnet(static_cast<int>(std::round(predictedX)) + UNET_EXTENSION_X_MARGIN, 0, probability.cols - 1);
+        double probabilityWeight = anchorProbabilityWeightUnet(step) * unetWeight;
+        double transitionWeight = anchorTransitionWeightUnet(step) * transitionScale;
+        int x0 = clampIntUnet(static_cast<int>(std::round(predictedX)) - extensionXMargin, 0, probability.cols - 1);
+        int x1 = clampIntUnet(static_cast<int>(std::round(predictedX)) + extensionXMargin, 0, probability.cols - 1);
         if (x1 < x0) std::swap(x0, x1);
+        if (!clampXRangeToTraceBoundsUnet(x0, x1, xBounds)) break;
 
         const float* probRow = probability.ptr<float>(y);
         float rowBestProb = 0.0f;
@@ -587,8 +774,8 @@ static bool traceAnchoredExtensionByProbability(
         }
 
         for (int x = x0; x <= x1; ++x) {
-            int left = std::max(0, x - UNET_MAX_X_STEP_PER_ROW);
-            int right = std::min(probability.cols - 1, x + UNET_MAX_X_STEP_PER_ROW);
+            int left = std::max(0, x - maxXStep);
+            int right = std::min(probability.cols - 1, x + maxXStep);
             double bestPrev = INF;
             int bestPrevX = -1;
 
@@ -605,9 +792,9 @@ static bool traceAnchoredExtensionByProbability(
             if (bestPrevX < 0) continue;
 
             double probabilityCost = probabilityWeight * (1.0 - static_cast<double>(probRow[x]));
-            double shapeCost = UNET_EXTENSION_SHAPE_PRIOR_WEIGHT *
-                               std::min(1.0, std::abs(static_cast<double>(x) - predictedX) /
-                                                 (UNET_EXTENSION_X_MARGIN + 1.0));
+            double offsetRatio = std::min(1.0, std::abs(static_cast<double>(x) - predictedX) /
+                                                (extensionXMargin + 1.0));
+            double shapeCost = shapeWeight * offsetRatio * offsetRatio;
             currDp[x] = bestPrev + probabilityCost + shapeCost;
             parent.at<int>(step, x) = bestPrevX;
         }
@@ -735,32 +922,19 @@ static double meanXOfCurveUnet(const std::vector<cv::Point>& points) {
     return sum / static_cast<double>(points.size());
 }
 
-// 计算一个激光锚点到某条候选曲线的最近欧氏距离。
-static double pointToCurveDistanceUnet(const cv::Point& p, const std::vector<cv::Point>& curve) {
-    if (curve.empty()) return std::numeric_limits<double>::max() / 4.0;
-
-    double best = std::numeric_limits<double>::max();
-    for (const auto& q : curve) {
-        double dx = static_cast<double>(p.x - q.x);
-        double dy = static_cast<double>(p.y - q.y);
-        best = std::min(best, std::sqrt(dx * dx + dy * dy));
-    }
-    return best;
-}
-
-// 用两个激光锚点到候选曲线的平均距离，衡量该候选曲线是否对应当前橘缝对。
-static double curveAnchorCostUnet(const std::vector<cv::Point>& curve, cv::Point p1, cv::Point p2) {
-    double d1 = pointToCurveDistanceUnet(p1, curve);
-    double d2 = pointToCurveDistanceUnet(p2, curve);
-    return 0.5 * (d1 + d2);
-}
-
 struct ShiftEstimateUnet {
     bool valid = false;
     double dx = 0.0;
     double dx1 = 0.0;
     double dx2 = 0.0;
-    double cost = 0.0;
+};
+
+struct CurveCandidateScoreUnet {
+    bool valid = false;
+    double total = std::numeric_limits<double>::max();
+    double anchorCost = 0.0;
+    double probabilityCost = 1.0;
+    double shapeCost = 0.0;
 };
 
 // 在指定 y 附近估计候选曲线的 x。只用于 x 方向校准，不修改曲线的 y。
@@ -824,9 +998,6 @@ static ShiftEstimateUnet estimateCurveShiftXUnet(
     if (std::abs(estimate.dx) > UNET_SHIFT_MAX_ABS_DX) return estimate;
     if (dxDelta > UNET_SHIFT_MAX_DX_DELTA) return estimate;
 
-    estimate.cost = std::abs(estimate.dx1)
-                  + std::abs(estimate.dx2)
-                  + dxDelta * UNET_SHIFT_DX_DELTA_WEIGHT;
     estimate.valid = true;
     return estimate;
 }
@@ -850,19 +1021,119 @@ static std::vector<cv::Point> shiftCurveXUnet(
     return shifted;
 }
 
+static double probabilityCostOnCurveUnet(
+    const cv::Mat& probability,
+    const std::vector<cv::Point>& curve,
+    double fallbackCost
+) {
+    if (probability.empty() || curve.empty()) return fallbackCost;
+
+    double total = 0.0;
+    int count = 0;
+    for (const auto& point : curve) {
+        if (point.x < 0 || point.x >= probability.cols ||
+            point.y < 0 || point.y >= probability.rows) {
+            continue;
+        }
+
+        total += 1.0 - static_cast<double>(probability.at<float>(point.y, point.x));
+        count++;
+    }
+
+    return count > 0 ? total / static_cast<double>(count) : fallbackCost;
+}
+
+static double shapeCostToTraditionalLineUnet(
+    const std::vector<cv::Point>& curve,
+    cv::Point p1,
+    cv::Point p2
+) {
+    if (curve.empty()) return 1.0;
+
+    cv::Point top = p1;
+    cv::Point bottom = p2;
+    if (top.y > bottom.y) std::swap(top, bottom);
+
+    double slopeDxPerDy = 0.0;
+    int dy = bottom.y - top.y;
+    if (std::abs(dy) > 1) {
+        slopeDxPerDy = static_cast<double>(bottom.x - top.x) / static_cast<double>(dy);
+    }
+
+    double total = 0.0;
+    int count = 0;
+    for (const auto& point : curve) {
+        double predictedX = static_cast<double>(top.x) +
+                            slopeDxPerDy * static_cast<double>(point.y - top.y);
+        total += std::min(1.0, std::abs(static_cast<double>(point.x) - predictedX) / UNET_SELECT_SHAPE_NORM);
+        count++;
+    }
+
+    return count > 0 ? total / static_cast<double>(count) : 1.0;
+}
+
+static bool curveInsideTraceBoundsUnet(
+    const std::vector<cv::Point>& curve,
+    const UnetTraceXBounds* bounds
+) {
+    if (bounds == nullptr || !bounds->enabled) return true;
+    for (const auto& point : curve) {
+        if (point.x < bounds->minX || point.x > bounds->maxX) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static CurveCandidateScoreUnet scoreCurveCandidateUnet(
+    const std::vector<cv::Point>& curve,
+    const cv::Mat& probability,
+    cv::Point p1,
+    cv::Point p2,
+    const UnetTraceXBounds* xBounds,
+    double probabilityCostOverride,
+    bool requireTightAnchors
+) {
+    CurveCandidateScoreUnet score;
+    if (curve.size() < 2) return score;
+    if (!curveInsideTraceBoundsUnet(curve, xBounds)) return score;
+
+    double curveX1 = 0.0;
+    double curveX2 = 0.0;
+    if (!findCurveXAtYUnet(curve, p1.y, curveX1)) return score;
+    if (!findCurveXAtYUnet(curve, p2.y, curveX2)) return score;
+
+    double anchorDx1 = std::abs(curveX1 - static_cast<double>(p1.x));
+    double anchorDx2 = std::abs(curveX2 - static_cast<double>(p2.x));
+    score.anchorCost = 0.5 * (anchorDx1 + anchorDx2);
+    if (requireTightAnchors && score.anchorCost > UNET_SELECT_MAX_ANCHOR_ERROR) return score;
+
+    score.probabilityCost = probabilityCostOverride >= 0.0
+        ? probabilityCostOverride
+        : probabilityCostOnCurveUnet(probability, curve, 1.0);
+    score.shapeCost = shapeCostToTraditionalLineUnet(curve, p1, p2);
+    score.total = UNET_SELECT_ANCHOR_WEIGHT * score.anchorCost
+                + UNET_SELECT_PROB_WEIGHT * score.probabilityCost
+                + UNET_SELECT_SHAPE_WEIGHT * score.shapeCost;
+    score.valid = true;
+    return score;
+}
+
 // 从完整 U-Net 候选线里选出最适合两个传统橘缝点的一条，并只做 x 方向整体平移。
 static bool selectShiftedFullCurveUnet(
     const std::vector<SeamCurveResult>& fullCurves,
     const std::vector<bool>& used,
+    const cv::Mat& probability,
     cv::Point p1,
     cv::Point p2,
     const cv::Size& imageSize,
+    const UnetTraceXBounds* xBounds,
     std::vector<cv::Point>& shiftedCurve,
-    double& meanCost,
+    CurveCandidateScoreUnet& selectedScore,
     int& selectedIdx
 ) {
     selectedIdx = -1;
-    meanCost = 0.0;
+    selectedScore = CurveCandidateScoreUnet();
     shiftedCurve.clear();
 
     double bestCost = std::numeric_limits<double>::max();
@@ -874,24 +1145,30 @@ static bool selectShiftedFullCurveUnet(
         ShiftEstimateUnet estimate = estimateCurveShiftXUnet(fullCurves[i].curve_points, p1, p2);
         if (!estimate.valid) continue;
 
-        double cost = estimate.cost + fullCurves[i].mean_cost * UNET_SHIFT_MEAN_COST_WEIGHT;
-        if (cost < bestCost) {
-            bestCost = cost;
+        std::vector<cv::Point> candidate = shiftCurveXUnet(fullCurves[i].curve_points, estimate.dx, imageSize);
+        CurveCandidateScoreUnet score = scoreCurveCandidateUnet(
+            candidate, probability, p1, p2, xBounds, fullCurves[i].mean_cost, true);
+        if (!score.valid) continue;
+
+        if (score.total < bestCost) {
+            bestCost = score.total;
             bestEstimate = estimate;
+            shiftedCurve = candidate;
+            selectedScore = score;
             selectedIdx = i;
         }
     }
 
     if (selectedIdx < 0) return false;
 
-    shiftedCurve = shiftCurveXUnet(fullCurves[selectedIdx].curve_points, bestEstimate.dx, imageSize);
-    meanCost = fullCurves[selectedIdx].mean_cost;
-
     std::cout << "[U-Net] 使用完整候选线横向平移: idx=" << selectedIdx
               << ", dx=" << bestEstimate.dx
               << ", dx1=" << bestEstimate.dx1
               << ", dx2=" << bestEstimate.dx2
-              << ", cost=" << bestCost
+              << ", cost=" << selectedScore.total
+              << ", anchor=" << selectedScore.anchorCost
+              << ", prob=" << selectedScore.probabilityCost
+              << ", shape=" << selectedScore.shapeCost
               << std::endl;
 
     return shiftedCurve.size() >= 2;
@@ -920,7 +1197,9 @@ static bool buildAnchoredCurveByProbability(
     cv::Point p2,
     cv::Size imageSize,
     std::vector<cv::Point>& curvePoints,
-    double& meanCost
+    double& meanCost,
+    const UnetTraceXBounds* xBounds = nullptr,
+    const UnetTraceTuning* tuning = nullptr
 ) {
     curvePoints.clear();
     meanCost = 0.0;
@@ -947,11 +1226,12 @@ static bool buildAnchoredCurveByProbability(
     int costCount = 0;
 
     bool hasUpper = traceAnchoredExtensionByProbability(
-        probability, topLaser, -1, slopeDxPerDy, upperFromAnchor, upperCost);
+        probability, topLaser, -1, slopeDxPerDy, upperFromAnchor, upperCost, xBounds, tuning);
     bool hasLower = traceAnchoredExtensionByProbability(
-        probability, bottomLaser, 1, slopeDxPerDy, lowerFromAnchor, lowerCost);
+        probability, bottomLaser, 1, slopeDxPerDy, lowerFromAnchor, lowerCost, xBounds, tuning);
 
-    bool hasMiddleProbability = traceSingleCurveByProbability(probability, topLaser, bottomLaser, middleSegment, middleCost);
+    bool hasMiddleProbability = traceSingleCurveByProbability(
+        probability, topLaser, bottomLaser, middleSegment, middleCost, xBounds, tuning);
     if (!hasMiddleProbability) {
         middleSegment = buildLinePathUnet(topLaser, bottomLaser, imageSize);
         middleCost = 1.0;
@@ -983,75 +1263,6 @@ static bool buildAnchoredCurveByProbability(
               << std::endl;
 
     return (hasUpper || hasMiddleProbability || hasLower) && curvePoints.size() >= 2;
-}
-
-// 以两个激光点为锚点生成整条橘缝：上段、中段、下段都用概率图 DP 追线。
-static bool buildThreePartCurveByProbability(
-    const cv::Mat& probability,
-    cv::Point p1,
-    cv::Point p2,
-    const std::vector<cv::Point>* selectedFullCurve,
-    cv::Size imageSize,
-    std::vector<cv::Point>& curvePoints,
-    double& meanCost
-) {
-    curvePoints.clear();
-    meanCost = 0.0;
-    if (probability.empty()) return false;
-
-    cv::Point topLaser = p1;
-    cv::Point bottomLaser = p2;
-    if (topLaser.y > bottomLaser.y) {
-        std::swap(topLaser, bottomLaser);
-    }
-
-    std::vector<cv::Point> middleSegment;
-    double middleCost = 0.0;
-    if (!traceSingleCurveByProbability(probability, topLaser, bottomLaser, middleSegment, middleCost)) {
-        middleSegment = buildLinePathUnet(topLaser, bottomLaser, imageSize);
-        middleCost = 1.0;
-    }
-
-    std::vector<cv::Point> upperSegment;
-    std::vector<cv::Point> lowerSegment;
-    double upperCost = 0.0;
-    double lowerCost = 0.0;
-    int costCount = 1;
-
-    if (selectedFullCurve != nullptr && selectedFullCurve->size() >= 2) {
-        cv::Point topEnd = selectedFullCurve->front();
-        cv::Point bottomEnd = selectedFullCurve->back();
-        if (topEnd.y > bottomEnd.y) {
-            std::swap(topEnd, bottomEnd);
-        }
-
-        if (topLaser.y - topEnd.y >= UNET_MIN_VERTICAL_SPAN) {
-            if (traceSingleCurveByProbability(probability, topEnd, topLaser, upperSegment, upperCost)) {
-                costCount++;
-            } else {
-                upperSegment.clear();
-            }
-        }
-
-        if (bottomEnd.y - bottomLaser.y >= UNET_MIN_VERTICAL_SPAN) {
-            if (traceSingleCurveByProbability(probability, bottomLaser, bottomEnd, lowerSegment, lowerCost)) {
-                costCount++;
-            } else {
-                lowerSegment.clear();
-            }
-        }
-    }
-
-    appendCurveSegmentUnet(curvePoints, upperSegment);
-    appendCurveSegmentUnet(curvePoints, middleSegment);
-    appendCurveSegmentUnet(curvePoints, lowerSegment);
-
-    if (curvePoints.size() >= 3) {
-        curvePoints = smoothCurvePathUnet(curvePoints, 2, imageSize);
-    }
-
-    meanCost = (middleCost + upperCost + lowerCost) / std::max(1, costCount);
-    return curvePoints.size() >= 2;
 }
 
 // 无传统激光锚点时的调试兜底：从 U-Net 概率图中提取若干条完整候选橘缝中心线。
@@ -1104,8 +1315,8 @@ static std::vector<SeamCurveResult> extractFullUnetCurves(const cv::Mat& probabi
     return curves;
 }
 
-// 主入口：传统双激光结果给出硬锚点，U-Net 概率图负责从锚点向上/向下延伸并连接成线。
-// 如果模型不可用或概率路径不可信，则退回两个激光点之间的端点直线。
+// 主入口：传统双激光点负责定位，U-Net 完整候选线负责形状；候选按统一代价选择。
+// 如果模型不可用或候选不可信，则退回两个激光点之间的端点直线。
 std::vector<SeamCurveResult> traceSeamCurvesByUnet(
     const cv::Mat& originImage,
     const std::vector<MatchedSeamPair>& seamPairs,
@@ -1124,7 +1335,12 @@ std::vector<SeamCurveResult> traceSeamCurvesByUnet(
         return extractFullUnetCurves(probability);
     }
 
-    for (const auto& pair : seamPairs) {
+    std::vector<UnetTraceXBounds> traceBounds = buildTraceBoundsForPairsUnet(seamPairs, originImage.size());
+    std::vector<SeamCurveResult> fullCurves = extractFullUnetCurves(probability);
+    std::vector<bool> usedFullCurve(fullCurves.size(), false);
+
+    for (int pairIdx = 0; pairIdx < static_cast<int>(seamPairs.size()); ++pairIdx) {
+        const auto& pair = seamPairs[pairIdx];
         SeamCurveResult result;
         result.pair = pair;
         result.mean_cost = 0.0;
@@ -1145,19 +1361,101 @@ std::vector<SeamCurveResult> traceSeamCurvesByUnet(
             continue;
         }
 
-        if (!probability.empty() && buildAnchoredCurveByProbability(
+        UnetTraceTuning tuning = buildTraceTuningForAnchorsUnet(p1, p2, originImage.size());
+        const UnetTraceXBounds* pairBounds =
+            pairIdx < static_cast<int>(traceBounds.size()) ? &traceBounds[pairIdx] : nullptr;
+
+        std::vector<cv::Point> anchoredCurve;
+        double anchoredMeanCost = 0.0;
+        CurveCandidateScoreUnet anchoredScore;
+        bool hasAnchored = !probability.empty() && buildAnchoredCurveByProbability(
+            probability,
+            p1,
+            p2,
+            originImage.size(),
+            anchoredCurve,
+            anchoredMeanCost,
+            pairBounds,
+            &tuning
+        );
+        if (hasAnchored) {
+            anchoredScore = scoreCurveCandidateUnet(
+                anchoredCurve, probability, p1, p2, pairBounds, -1.0, false);
+        }
+
+        std::vector<cv::Point> shiftedCurve;
+        CurveCandidateScoreUnet shiftedScore;
+        int shiftedIdx = -1;
+        if (!probability.empty()) {
+            selectShiftedFullCurveUnet(
+                fullCurves,
+                usedFullCurve,
                 probability,
                 p1,
                 p2,
                 originImage.size(),
-                result.curve_points,
-                result.mean_cost
-            )) {
+                pairBounds,
+                shiftedCurve,
+                shiftedScore,
+                shiftedIdx
+            );
+        }
+
+        if (anchoredScore.valid) {
+            std::cout << "[U-Net] 锚点DP候选: cost=" << anchoredScore.total
+                      << ", anchor=" << anchoredScore.anchorCost
+                      << ", prob=" << anchoredScore.probabilityCost
+                      << ", shape=" << anchoredScore.shapeCost
+                      << std::endl;
+        }
+        if (shiftedScore.valid) {
+            std::cout << "[U-Net] 平移候选: cost=" << shiftedScore.total
+                      << ", anchor=" << shiftedScore.anchorCost
+                      << ", prob=" << shiftedScore.probabilityCost
+                      << ", shape=" << shiftedScore.shapeCost
+                      << std::endl;
+        }
+
+        double shiftedAcceptRatio = lerpUnet(
+            UNET_SELECT_EDGE_SHIFTED_RATIO,
+            UNET_SELECT_CENTER_SHIFTED_RATIO,
+            tuning.centerTrust
+        );
+        bool useShifted = false;
+        if (shiftedScore.valid && !anchoredScore.valid) {
+            useShifted = true;
+        } else if (shiftedScore.valid && anchoredScore.valid) {
+            useShifted = shiftedScore.total <= anchoredScore.total * shiftedAcceptRatio;
+        }
+
+        std::cout << "[U-Net] 选择倍率: pair=" << pairIdx
+                  << ", center_trust=" << tuning.centerTrust
+                  << ", shifted_ratio=" << shiftedAcceptRatio
+                  << std::endl;
+
+        if (useShifted) {
+            result.curve_points = shiftedCurve;
+            result.mean_cost = shiftedScore.total;
             result.fallback_to_line = false;
+            if (shiftedIdx >= 0 && shiftedIdx < static_cast<int>(usedFullCurve.size())) {
+                usedFullCurve[shiftedIdx] = true;
+            }
+            std::cout << "[U-Net] 选择平移完整线: pair=" << pairIdx
+                      << ", idx=" << shiftedIdx
+                      << ", cost=" << shiftedScore.total
+                      << std::endl;
+        } else if (anchoredScore.valid) {
+            result.curve_points = anchoredCurve;
+            result.mean_cost = anchoredScore.total;
+            result.fallback_to_line = false;
+            std::cout << "[U-Net] 选择锚点DP线: pair=" << pairIdx
+                      << ", cost=" << anchoredScore.total
+                      << std::endl;
         } else {
             result.curve_points = buildLinePathUnet(p1, p2, originImage.size());
             result.fallback_to_line = true;
             result.mean_cost = 1.0;
+            std::cout << "[U-Net] 候选都不可用，使用端点直线: pair=" << pairIdx << std::endl;
         }
 
         curves.push_back(result);

@@ -71,6 +71,8 @@ int emm57_move(int addr, float angle){
     }
     bool dir = (angle >=0) ? true : false;
     position_control_emm(addr, rpm, 0, dir, abs(angle), true, false);
+    sleep(3);
+    printf("%d号电机 pos=%.2f\n",addr, mMotor[addr - 1].get_position());
     return 0;
 }
 

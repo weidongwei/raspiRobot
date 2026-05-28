@@ -48,3 +48,6 @@ original_unet           3000ms  2分
         unet_lite5在decoder加boundary辅助输出。模型除了预测橘缝 mask，再额外预测一张“边界图”。训练时用边界图监督 decoder 学会更精确地恢复细线边缘；推理时可以只用主 mask 输出，不用边界输出。
         unet_lite6在decoder中使用Deep supervision，deep supervision强制中间层也学会预测橘缝。
 26.5.27 更改了传统算法中果面基线的参数，并且findseam函数中找橘缝分瓣点过程跳过头尾激光数据点以防误检。
+26.5.28 修改了概率图DP追线。靠近图像中心使用锚点DP曲线，远离图像中心使用平移U-Net曲线。
+
+
