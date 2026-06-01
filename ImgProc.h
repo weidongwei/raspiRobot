@@ -163,7 +163,7 @@ std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut);
 
 std::vector<LaserData> smooth(const std::vector<LaserData> data);
 
-std::vector<LaserBaselineData> getLaserBaselineDistance(const std::vector<LaserData>& data, int halfWindowPixel = 40, double quantile = 0.25);
+std::vector<LaserBaselineData> getLaserBaselineDistance(const std::vector<LaserData>& data, int halfWindowPixel = 60, double quantile = 0.25);
 bool saveLaserBaselineCSV(const std::vector<LaserBaselineData>& data, const std::string& filename);
 std::vector<LaserData> buildSeamSignalData(const std::vector<LaserBaselineData>& data);
 

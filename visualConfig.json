@@ -1,8 +1,8 @@
 {
-    "origin_img_path": "/home/dw/robot/image/origin_image15/origin/",
-    "proc_path": "/home/dw/robot/image/origin_image15/proc/",
-    "diff_path": "/home/dw/robot/image/origin_image15/diff/",
-    "csv_path": "/home/dw/robot/image/origin_image15/csv/",
+    "origin_img_path": "/home/dw/robot/image/origin_image16/origin/",
+    "proc_path": "/home/dw/robot/image/origin_image16/proc/",
+    "diff_path": "/home/dw/robot/image/origin_image16/diff/",
+    "csv_path": "/home/dw/robot/image/origin_image16/csv/",
 
     "laser_duty": 0.4,                 "ldu_comment": "激光占空比",
     "exposure_time": 200,              "eti_comment": "相机曝光时间(ms)",
@@ -22,7 +22,7 @@
     "ratio_width": 0.2,                 "rwi_comment": "宽度权重比",
     "ratio_depth": 0.8,                 "rde_comment": "深度权重比",
     "best_width": 80,                 "bwi_comment": "最佳宽度",
-    "best_depth": 4,                  "bde_comment": "最佳深度",
-    "dx_between_seams_min": 50,         "dbs_comment": "相邻橘缝最小距离",
+    "best_depth": 3,                  "bde_comment": "最佳深度",
+    "dx_between_seams_min": 30,         "dbs_comment": "相邻橘缝最小距离",
     "total_score_min": 0.8,             "tsm_comment": "综合评分最低分数"
 }

@@ -395,13 +395,36 @@ static double getQuantile(std::vector<double> values, double quantile) {
     return values[left] * (1.0 - ratio) + values[right] * ratio;
 }
 
+static double clamp01(double value) {
+    if (value < 0.0) return 0.0;
+    if (value > 1.0) return 1.0;
+    return value;
+}
+
+// 按每条激光线自身的相对 x 位置选择基线窗口：两端小，中间大，过渡区平滑渐变。
+static int getAdaptiveBaselineHalfWindow(int xPixel, int minX, int maxX, int centerHalfWindow) {
+    if (centerHalfWindow <= 1 || maxX <= minX) return std::max(1, centerHalfWindow);
+
+    const int edgeHalfWindow = std::max(15, centerHalfWindow / 2);
+    const double relativeX = static_cast<double>(xPixel - minX) / static_cast<double>(maxX - minX);
+
+    const double edgeZone = 0.18;
+    const double transitionZone = 0.20;
+    const double rise = clamp01((relativeX - edgeZone) / transitionZone);
+    const double fall = clamp01(((1.0 - edgeZone) - relativeX) / transitionZone);
+    const double centerWeight = std::min(rise, fall);
+
+    const double halfWindow = edgeHalfWindow + (centerHalfWindow - edgeHalfWindow) * centerWeight;
+    return std::max(1, static_cast<int>(halfWindow + 0.5));
+}
+
 /**
  * @param data 激光点数据列表；每个点需包含 laser_id、x_pixel、y_pixel 和 distance_cm。
- * @param halfWindowPixel 基线统计窗口的半宽，单位为 x 方向像素；值越大基线越平滑，但越可能抹掉局部变化。
+ * @param halfWindowPixel 中心区域基线统计窗口的半宽，单位为 x 方向像素；激光线两端会自动使用较小窗口。
  * @param quantile 窗口内距离的分位数，取值范围 0.0 到 1.0；例如 0.25 表示取 25% 分位距离作为局部果面基线。
  * @return std::vector<LaserBaselineData> 带有原始距离、基线距离和橘缝信号的激光点数据。
  */
-// 获取两条激光的果面基线距离。baseline_distance 是每个点附近窗口内的低分位数距离曲线。
+// 获取两条激光的果面基线距离。baseline_distance 是每个点附近自适应窗口内的低分位数距离曲线。
 std::vector<LaserBaselineData> getLaserBaselineDistance(const std::vector<LaserData>& data, int halfWindowPixel, double quantile) {
     std::vector<LaserBaselineData> baselineData;
     std::map<int, std::vector<LaserData>> grouped;
@@ -415,10 +438,14 @@ std::vector<LaserBaselineData> getLaserBaselineDistance(const std::vector<LaserD
             return a.x_pixel < b.x_pixel;
         });
 
+        const int minX = rows.front().x_pixel;
+        const int maxX = rows.back().x_pixel;
+
         for (const auto& row : rows) {
+            const int adaptiveHalfWindow = getAdaptiveBaselineHalfWindow(row.x_pixel, minX, maxX, halfWindowPixel);
             std::vector<double> windowDistances;
             for (const auto& neighbor : rows) {
-                if (std::abs(neighbor.x_pixel - row.x_pixel) <= halfWindowPixel) {
+                if (std::abs(neighbor.x_pixel - row.x_pixel) <= adaptiveHalfWindow) {
                     windowDistances.push_back(neighbor.distance_cm);
                 }
             }
@@ -1105,7 +1132,7 @@ cv::Mat detectMain(cv::Mat originImage){
     std::vector<LaserData> smoothData = smooth(data);
 
     // 获取基线数据，改进激光数据
-    std::vector<LaserBaselineData> baselineData = getLaserBaselineDistance(smoothData, 40, 0.25);
+    std::vector<LaserBaselineData> baselineData = getLaserBaselineDistance(smoothData, 60, 0.25);
     // saveLaserBaselineCSV(baselineData, vConfig.csv_path + getTimeString() + "_points_baseline.csv");
     std::vector<LaserData> seamSignalData = buildSeamSignalData(baselineData);
 
@@ -1160,6 +1187,4 @@ cv::Mat detectMain(cv::Mat originImage){
 
     return finalMat;
 }
-
-
 

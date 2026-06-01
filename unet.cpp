@@ -10,8 +10,8 @@
 
 // 模型与开关
 static const bool UNET_SEAM_ENABLE = true; // U-Net 总开关；false 退回传统直线
-static const char* UNET_MODEL_PATH_PRIMARY = "/home/dw/robot/cpp/best_unet_lite6_320.onnx"; // 部署模型；改错会加载失败
-static const char* UNET_MODEL_PATH_FALLBACK = "cpp/best_unet_lite6_320.onnx"; // 本地兜底；改错会失去本地兜底
+static const char* UNET_MODEL_PATH_PRIMARY = "/home/dw/robot/cpp/best_unet_320.onnx"; // 部署模型；改错会加载失败
+static const char* UNET_MODEL_PATH_FALLBACK = "cpp/best_unet_320.onnx"; // 本地兜底；改错会失去本地兜底
 static const int UNET_INPUT_SIZE = 320; // 模型输入；必须匹配 ONNX 导出尺寸
 
 // 中段 DP 基础参数
