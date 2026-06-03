@@ -1108,6 +1108,88 @@ cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, st
     return canvas;
 }
 
+//  otsu和改进版otsu对比函数
+bool saveOtsuCompareImages(const cv::Mat& originImage,
+                           const std::string& outputDir,
+                           const std::string& prefix) {
+    if (originImage.empty()) {
+        std::cerr << "saveOtsuCompareImages: 输入图片为空。" << std::endl;
+        return false;
+    }
+
+    cv::Mat undistortedImg;
+    cv::Mat diff = preprocessLaserImage(originImage, undistortedImg);
+
+    cv::Mat otsuCanvas;
+    cv::Mat improvedCanvas;
+    if (undistortedImg.channels() == 1) {
+        cv::cvtColor(undistortedImg, otsuCanvas, cv::COLOR_GRAY2BGR);
+        cv::cvtColor(undistortedImg, improvedCanvas, cv::COLOR_GRAY2BGR);
+    } else if (undistortedImg.channels() == 4) {
+        cv::cvtColor(undistortedImg, otsuCanvas, cv::COLOR_BGRA2BGR);
+        cv::cvtColor(undistortedImg, improvedCanvas, cv::COLOR_BGRA2BGR);
+    } else {
+        otsuCanvas = undistortedImg.clone();
+        improvedCanvas = undistortedImg.clone();
+    }
+
+    cv::Mat mask_otsu;
+    double otsu_thresh = cv::threshold(diff, mask_otsu, 0, 255,
+                                       cv::THRESH_BINARY | cv::THRESH_OTSU);
+
+    std::vector<std::vector<cv::Point>> otsuContours;
+    cv::findContours(mask_otsu, otsuContours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    std::sort(otsuContours.begin(), otsuContours.end(),
+              [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
+                  return cv::contourArea(a) > cv::contourArea(b);
+              });
+    cv::drawContours(otsuCanvas, otsuContours, -1, cv::Scalar(0, 0, 255), 2);
+
+    cv::Mat grad_x, grad_y, grad;
+    cv::Sobel(diff, grad_x, CV_16S, 1, 0, 3);
+    cv::Sobel(diff, grad_y, CV_16S, 0, 1, 3);
+    cv::convertScaleAbs(grad_x, grad_x);
+    cv::convertScaleAbs(grad_y, grad_y);
+    cv::addWeighted(grad_x, 0.5, grad_y, 0.5, 0, grad);
+
+    cv::Mat grad_masked;
+    grad.copyTo(grad_masked, mask_otsu);
+
+    cv::Mat mask_grad;
+    double grad_thresh = cv::threshold(grad_masked, mask_grad, 0, 255,
+                                       cv::THRESH_BINARY | cv::THRESH_OTSU);
+
+    cv::Mat kernel_close = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 3));
+    cv::Mat mask_filled;
+    cv::morphologyEx(mask_grad, mask_filled, cv::MORPH_CLOSE, kernel_close);
+
+    cv::Mat mask_final;
+    cv::bitwise_and(mask_filled, mask_otsu, mask_final);
+
+    std::vector<std::vector<cv::Point>> improvedContours;
+    cv::findContours(mask_final, improvedContours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    std::sort(improvedContours.begin(), improvedContours.end(),
+              [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b) {
+                  return cv::contourArea(a) > cv::contourArea(b);
+              });
+    cv::drawContours(improvedCanvas, improvedContours, -1, cv::Scalar(0, 0, 255), 2);
+
+    std::string dir = outputDir.empty() ? vConfig.proc_path : outputDir;
+    if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') {
+        dir += "/";
+    }
+    std::string namePrefix = prefix.empty() ? getTimeString() : prefix;
+
+    std::string otsuPath = dir + namePrefix + "_otsu_contours.jpg";
+    std::string improvedPath = dir + namePrefix + "_improved_otsu_contours.jpg";
+    bool ok1 = cv::imwrite(otsuPath, otsuCanvas);
+    bool ok2 = cv::imwrite(improvedPath, improvedCanvas);
+
+    std::cout << "原版 Otsu 轮廓图: " << otsuPath << std::endl;
+    std::cout << "改进版 Otsu 轮廓图: " << improvedPath << std::endl;
+    return ok1 && ok2;
+}
+
 // 检测激光中心线主函数
 std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut) {
     cv::Mat undistortedImg;

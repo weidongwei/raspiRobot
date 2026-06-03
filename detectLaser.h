@@ -14,6 +14,10 @@ std::vector<LaserContour> extractCenterlinePoints2(const std::vector<std::vector
 cv::Mat saveAndVisualize(const std::vector<std::vector<cv::Point>>& contours, const std::vector<LaserContour>& lcs, cv::Mat& canvas, const cv::Mat& diff, std::vector<LaserData>& outData);
 std::vector<LaserData> detectLaserCenter(cv::Mat image, cv::Mat* imageOut);
 
+bool saveOtsuCompareImages(const cv::Mat& originImage,
+                           const std::string& outputDir = "",
+                           const std::string& prefix = "");
+
 
 struct LaserResultContour {
     double topY = -1.0;

@@ -58,24 +58,29 @@ static const int UNET_ANCHOR_FULL_PROB_RADIUS = 40; // 概率恢复半径；调�
 static const double UNET_ANCHOR_MIN_PROB_WEIGHT = 0.20; // 锚点最低概率权重；调高更信锚点附近 U-Net，调低更信传统
 static const double UNET_ANCHOR_NEAR_TRANSITION_WEIGHT = 0.12; // 锚点横跳惩罚；调高锚点附近更直，调低更能弯
 
+// DP 线锚点凸起判定
+static const int UNET_ANCHOR_BULGE_Y_OFFSET = 12; // 锚点上下采样距离；调高看更远处趋势，调低更局部
+static const int UNET_ANCHOR_BULGE_Y_WINDOW = 4; // 锚点上下采样窗口；调高更平滑，调低更敏感
+static const double UNET_ANCHOR_BULGE_MIN_DX = 8.0; // 锚点凸起最小横向偏移；调高少切平移，调低更容易切
+
 // 多橘缝隔离
 static const int UNET_NEIGHBOR_BOUND_MARGIN = 12; // 相邻线隔离余量；调高更防串线但可用区变窄，调低更宽松
 
 // 图像中心自适应权重
 static const double UNET_CENTER_UNET_WEIGHT = 1.00; // 中心 U-Net 权重；调高中心更信 U-Net，调低中心更保守
-static const double UNET_EDGE_UNET_WEIGHT = 0.18; // 边缘 U-Net 权重；调高边缘更追概率，调低边缘更信传统
+static const double UNET_EDGE_UNET_WEIGHT = 0.55; // 边缘 U-Net 权重；调高边缘更追概率，调低边缘更信传统
 static const double UNET_CENTER_TRANSITION_SCALE = 0.85; // 中心横跳倍率；调高中心更平滑，调低中心更灵活
-static const double UNET_EDGE_TRANSITION_SCALE = 2.30; // 边缘横跳倍率；调高边缘更稳，调低边缘更容易漂
+static const double UNET_EDGE_TRANSITION_SCALE = 1.35; // 边缘横跳倍率；调高边缘更稳，调低边缘更容易漂
 static const double UNET_CENTER_MIDDLE_SHAPE_WEIGHT = 0.22; // 中心中段先验；调高中心更贴直线，调低中心更随 U-Net
-static const double UNET_EDGE_MIDDLE_SHAPE_WEIGHT = 1.00; // 边缘中段先验；调高边缘更贴传统，调低边缘更随 U-Net
+static const double UNET_EDGE_MIDDLE_SHAPE_WEIGHT = 0.45; // 边缘中段先验；调高边缘更贴传统，调低边缘更随 U-Net
 static const double UNET_CENTER_EXTENSION_SHAPE_WEIGHT = 0.18; // 中心延伸先验；调高中心延伸更直，调低更随 U-Net
-static const double UNET_EDGE_EXTENSION_SHAPE_WEIGHT = 0.95; // 边缘延伸先验；调高边缘延伸更贴外推，调低更随 U-Net
+static const double UNET_EDGE_EXTENSION_SHAPE_WEIGHT = 0.45; // 边缘延伸先验；调高边缘延伸更贴外推，调低更随 U-Net
 static const int UNET_CENTER_MIDDLE_X_MARGIN = 46; // 中心中段半宽；调高更能弯，调低更防跑偏
-static const int UNET_EDGE_MIDDLE_X_MARGIN = 18; // 边缘中段半宽；调高边缘更自由，调低更防串线
+static const int UNET_EDGE_MIDDLE_X_MARGIN = 32; // 边缘中段半宽；调高边缘更自由，调低更防串线
 static const int UNET_CENTER_EXTENSION_X_MARGIN = 58; // 中心延伸半宽；调高延伸更自由，调低更保守
-static const int UNET_EDGE_EXTENSION_X_MARGIN = 20; // 边缘延伸半宽；调高边缘可追弯，调低更防跑偏
+static const int UNET_EDGE_EXTENSION_X_MARGIN = 40; // 边缘延伸半宽；调高边缘可追弯，调低更防跑偏
 static const int UNET_CENTER_MAX_X_STEP = 9; // 中心单行横跳；调高中心更灵活，调低更平滑
-static const int UNET_EDGE_MAX_X_STEP = 3; // 边缘单行横跳；调高边缘更灵活，调低更稳
+static const int UNET_EDGE_MAX_X_STEP = 6; // 边缘单行横跳；调高边缘更灵活，调低更稳
 
 // 前向声明：执行 U-Net ONNX 推理并返回与原图同尺寸的 0~1 概率图。
 static cv::Mat inferUnetProbability(const cv::Mat& image);
@@ -406,6 +411,87 @@ static std::vector<cv::Point> smoothCurvePathUnet(const std::vector<cv::Point>& 
     return smoothed;
 }
 
+static bool averageCurveXNearYUnet(
+    const std::vector<cv::Point>& curve,
+    int targetY,
+    int yWindow,
+    double& averageX
+) {
+    double sumX = 0.0;
+    int count = 0;
+    for (const auto& point : curve) {
+        if (std::abs(point.y - targetY) > yWindow) continue;
+        sumX += point.x;
+        count++;
+    }
+
+    if (count <= 0) return false;
+    averageX = sumX / static_cast<double>(count);
+    return true;
+}
+
+struct AnchorBulgeCheckUnet {
+    bool valid = false;
+    bool bulged = false;
+    double upperDx = 0.0;
+    double lowerDx = 0.0;
+};
+
+// 如果锚点上下两侧的 DP 曲线都落在锚点同一侧，说明锚点像凸点一样顶出来。
+static AnchorBulgeCheckUnet checkAnchorBulgeUnet(
+    const std::vector<cv::Point>& curve,
+    cv::Point anchor
+) {
+    AnchorBulgeCheckUnet check;
+    double upperX = 0.0;
+    double lowerX = 0.0;
+    bool hasUpper = averageCurveXNearYUnet(
+        curve,
+        anchor.y - UNET_ANCHOR_BULGE_Y_OFFSET,
+        UNET_ANCHOR_BULGE_Y_WINDOW,
+        upperX);
+    bool hasLower = averageCurveXNearYUnet(
+        curve,
+        anchor.y + UNET_ANCHOR_BULGE_Y_OFFSET,
+        UNET_ANCHOR_BULGE_Y_WINDOW,
+        lowerX);
+
+    check.valid = hasUpper && hasLower;
+    if (!check.valid) return check;
+
+    check.upperDx = upperX - static_cast<double>(anchor.x);
+    check.lowerDx = lowerX - static_cast<double>(anchor.x);
+    check.bulged =
+        (check.upperDx >= UNET_ANCHOR_BULGE_MIN_DX &&
+         check.lowerDx >= UNET_ANCHOR_BULGE_MIN_DX) ||
+        (check.upperDx <= -UNET_ANCHOR_BULGE_MIN_DX &&
+         check.lowerDx <= -UNET_ANCHOR_BULGE_MIN_DX);
+    return check;
+}
+
+static bool hasDoubleAnchorBulgeUnet(
+    const std::vector<cv::Point>& curve,
+    cv::Point p1,
+    cv::Point p2,
+    int pairIdx
+) {
+    AnchorBulgeCheckUnet c1 = checkAnchorBulgeUnet(curve, p1);
+    AnchorBulgeCheckUnet c2 = checkAnchorBulgeUnet(curve, p2);
+
+    std::cout << "[U-Net] DP锚点凸起检查: pair=" << pairIdx
+              << ", anchor1_valid=" << (c1.valid ? "true" : "false")
+              << ", anchor1_upper_dx=" << c1.upperDx
+              << ", anchor1_lower_dx=" << c1.lowerDx
+              << ", anchor1_bulged=" << (c1.bulged ? "true" : "false")
+              << ", anchor2_valid=" << (c2.valid ? "true" : "false")
+              << ", anchor2_upper_dx=" << c2.upperDx
+              << ", anchor2_lower_dx=" << c2.lowerDx
+              << ", anchor2_bulged=" << (c2.bulged ? "true" : "false")
+              << std::endl;
+
+    return c1.bulged && c2.bulged;
+}
+
 // 把任意输入图转换成 BGR 显示图，供调试函数直接在图上画概率点。
 static cv::Mat makeBgrDisplayImageUnet(const cv::Mat& image) {
     cv::Mat display;
@@ -720,7 +806,8 @@ static bool traceAnchoredExtensionByProbability(
     std::vector<cv::Point>& extensionPoints,
     double& meanCost,
     const UnetTraceXBounds* xBounds = nullptr,
-    const UnetTraceTuning* tuning = nullptr
+    const UnetTraceTuning* tuning = nullptr,
+    int maxExtensionRows = -1
 ) {
     extensionPoints.clear();
     meanCost = 0.0;
@@ -733,6 +820,9 @@ static bool traceAnchoredExtensionByProbability(
     }
 
     int maxStep = direction < 0 ? anchor.y : (probability.rows - 1 - anchor.y);
+    if (maxExtensionRows > 0) {
+        maxStep = std::min(maxStep, maxExtensionRows);
+    }
     if (maxStep < UNET_EXTENSION_MIN_ROWS) return false;
 
     int extensionXMargin = tuning != nullptr ? tuning->extensionXMargin : UNET_EXTENSION_X_MARGIN;
@@ -1216,6 +1306,7 @@ static bool buildAnchoredCurveByProbability(
     if (std::abs(dy) > 1) {
         slopeDxPerDy = static_cast<double>(bottomLaser.x - topLaser.x) / static_cast<double>(dy);
     }
+    int upperExtensionMaxRows = std::abs(dy);
 
     std::vector<cv::Point> upperFromAnchor;
     std::vector<cv::Point> lowerFromAnchor;
@@ -1226,7 +1317,7 @@ static bool buildAnchoredCurveByProbability(
     int costCount = 0;
 
     bool hasUpper = traceAnchoredExtensionByProbability(
-        probability, topLaser, -1, slopeDxPerDy, upperFromAnchor, upperCost, xBounds, tuning);
+        probability, topLaser, -1, slopeDxPerDy, upperFromAnchor, upperCost, xBounds, tuning, upperExtensionMaxRows);
     bool hasLower = traceAnchoredExtensionByProbability(
         probability, bottomLaser, 1, slopeDxPerDy, lowerFromAnchor, lowerCost, xBounds, tuning);
 
@@ -1258,6 +1349,7 @@ static bool buildAnchoredCurveByProbability(
     std::cout << "[U-Net] 锚点追线: upper=" << (hasUpper ? "true" : "false")
               << ", middle=" << (hasMiddleProbability ? "probability" : "line")
               << ", lower=" << (hasLower ? "true" : "false")
+              << ", upper_max_rows=" << upperExtensionMaxRows
               << ", points=" << curvePoints.size()
               << ", mean_cost=" << meanCost
               << std::endl;
@@ -1383,10 +1475,24 @@ std::vector<SeamCurveResult> traceSeamCurvesByUnet(
                 anchoredCurve, probability, p1, p2, pairBounds, -1.0, false);
         }
 
+        if (anchoredScore.valid) {
+            std::cout << "[U-Net] 锚点DP候选: cost=" << anchoredScore.total
+                      << ", anchor=" << anchoredScore.anchorCost
+                      << ", prob=" << anchoredScore.probabilityCost
+                      << ", shape=" << anchoredScore.shapeCost
+                      << std::endl;
+        }
+
+        bool dpDoubleBulged = false;
+        if (anchoredScore.valid) {
+            dpDoubleBulged = hasDoubleAnchorBulgeUnet(anchoredCurve, p1, p2, pairIdx);
+        }
+
         std::vector<cv::Point> shiftedCurve;
         CurveCandidateScoreUnet shiftedScore;
         int shiftedIdx = -1;
-        if (!probability.empty()) {
+        bool shouldTryShifted = !probability.empty() && (!anchoredScore.valid || dpDoubleBulged);
+        if (shouldTryShifted) {
             selectShiftedFullCurveUnet(
                 fullCurves,
                 usedFullCurve,
@@ -1400,14 +1506,6 @@ std::vector<SeamCurveResult> traceSeamCurvesByUnet(
                 shiftedIdx
             );
         }
-
-        if (anchoredScore.valid) {
-            std::cout << "[U-Net] 锚点DP候选: cost=" << anchoredScore.total
-                      << ", anchor=" << anchoredScore.anchorCost
-                      << ", prob=" << anchoredScore.probabilityCost
-                      << ", shape=" << anchoredScore.shapeCost
-                      << std::endl;
-        }
         if (shiftedScore.valid) {
             std::cout << "[U-Net] 平移候选: cost=" << shiftedScore.total
                       << ", anchor=" << shiftedScore.anchorCost
@@ -1416,46 +1514,47 @@ std::vector<SeamCurveResult> traceSeamCurvesByUnet(
                       << std::endl;
         }
 
-        double shiftedAcceptRatio = lerpUnet(
-            UNET_SELECT_EDGE_SHIFTED_RATIO,
-            UNET_SELECT_CENTER_SHIFTED_RATIO,
-            tuning.centerTrust
-        );
-        bool useShifted = false;
-        if (shiftedScore.valid && !anchoredScore.valid) {
-            useShifted = true;
-        } else if (shiftedScore.valid && anchoredScore.valid) {
-            useShifted = shiftedScore.total <= anchoredScore.total * shiftedAcceptRatio;
-        }
-
-        std::cout << "[U-Net] 选择倍率: pair=" << pairIdx
-                  << ", center_trust=" << tuning.centerTrust
-                  << ", shifted_ratio=" << shiftedAcceptRatio
-                  << std::endl;
-
-        if (useShifted) {
+        if (anchoredScore.valid && !dpDoubleBulged) {
+            result.curve_points = anchoredCurve;
+            result.mean_cost = anchoredScore.total;
+            result.fallback_to_line = false;
+            std::cout << "[U-Net] 最终选择: DP正常, pair=" << pairIdx
+                      << ", cost=" << anchoredScore.total
+                      << std::endl;
+        } else if (anchoredScore.valid && dpDoubleBulged && shiftedScore.valid) {
             result.curve_points = shiftedCurve;
             result.mean_cost = shiftedScore.total;
             result.fallback_to_line = false;
             if (shiftedIdx >= 0 && shiftedIdx < static_cast<int>(usedFullCurve.size())) {
                 usedFullCurve[shiftedIdx] = true;
             }
-            std::cout << "[U-Net] 选择平移完整线: pair=" << pairIdx
+            std::cout << "[U-Net] 最终选择: DP双锚点凸起切平移, pair=" << pairIdx
                       << ", idx=" << shiftedIdx
                       << ", cost=" << shiftedScore.total
                       << std::endl;
-        } else if (anchoredScore.valid) {
+        } else if (anchoredScore.valid && dpDoubleBulged) {
             result.curve_points = anchoredCurve;
             result.mean_cost = anchoredScore.total;
             result.fallback_to_line = false;
-            std::cout << "[U-Net] 选择锚点DP线: pair=" << pairIdx
+            std::cout << "[U-Net] 最终选择: 平移不可用保留DP, pair=" << pairIdx
                       << ", cost=" << anchoredScore.total
+                      << std::endl;
+        } else if (shiftedScore.valid) {
+            result.curve_points = shiftedCurve;
+            result.mean_cost = shiftedScore.total;
+            result.fallback_to_line = false;
+            if (shiftedIdx >= 0 && shiftedIdx < static_cast<int>(usedFullCurve.size())) {
+                usedFullCurve[shiftedIdx] = true;
+            }
+            std::cout << "[U-Net] 最终选择: DP无效用平移, pair=" << pairIdx
+                      << ", idx=" << shiftedIdx
+                      << ", cost=" << shiftedScore.total
                       << std::endl;
         } else {
             result.curve_points = buildLinePathUnet(p1, p2, originImage.size());
             result.fallback_to_line = true;
             result.mean_cost = 1.0;
-            std::cout << "[U-Net] 候选都不可用，使用端点直线: pair=" << pairIdx << std::endl;
+            std::cout << "[U-Net] 最终选择: 直线兜底, pair=" << pairIdx << std::endl;
         }
 
         curves.push_back(result);

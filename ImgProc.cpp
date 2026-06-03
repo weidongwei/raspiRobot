@@ -933,6 +933,103 @@ cv::Mat drawSeam(cv::Mat displayImage, const std::vector<SeamCurveResult>& curve
 
 }
 
+// 画出激光轮廓，以及黑色激光橘缝分瓣点。
+cv::Mat drawSeam3(cv::Mat displayImage, const std::vector<MatchedSeamPair> results, const std::vector<LaserData> data) {
+    if (displayImage.empty()) return displayImage;
+
+    if (displayImage.channels() == 1) {
+        cv::cvtColor(displayImage, displayImage, cv::COLOR_GRAY2BGR);
+    } else if (displayImage.channels() == 4) {
+        cv::cvtColor(displayImage, displayImage, cv::COLOR_BGRA2BGR);
+    } else {
+        displayImage = displayImage.clone();
+    }
+
+    cv::Mat undistortedImg;
+    cv::Mat diff = preprocessLaserImage(displayImage, undistortedImg);
+    std::vector<std::vector<cv::Point>> contours = getLaserContours(diff);
+    for (const auto& contour : contours) {
+        double area = cv::contourArea(contour);
+        if (area > displayImage.cols * displayImage.rows * 0.0002) {
+            cv::drawContours(displayImage, std::vector<std::vector<cv::Point>>{contour}, -1,
+                             cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
+        }
+    }
+
+    std::map<int, std::map<int, std::vector<int>>> skeletonYByLaserX;
+    for (const auto& row : data) {
+        if (row.x_pixel < 0 || row.x_pixel >= displayImage.cols ||
+            row.y_pixel < 0 || row.y_pixel >= displayImage.rows) {
+            continue;
+        }
+        skeletonYByLaserX[row.laser_id][row.x_pixel].push_back(row.y_pixel);
+    }
+
+    const cv::Scalar skeletonColor(255, 0, 0);
+    const int maxSkeletonGap = 12;
+    const int maxSkeletonYJump = 8;
+
+    for (auto& item : skeletonYByLaserX) {
+        std::vector<cv::Point> points;
+        for (auto& column : item.second) {
+            std::vector<int>& ys = column.second;
+            if (ys.empty()) continue;
+
+            std::sort(ys.begin(), ys.end());
+            int centerY = ys[ys.size() / 2];
+            points.push_back(cv::Point(column.first, centerY));
+        }
+
+        for (size_t i = 1; i < points.size(); ++i) {
+            int dx = points[i].x - points[i - 1].x;
+            int dy = std::abs(points[i].y - points[i - 1].y);
+            if (dx <= maxSkeletonGap && dy <= maxSkeletonYJump) {
+                cv::line(displayImage, points[i - 1], points[i], skeletonColor, 2, cv::LINE_AA);
+            }
+        }
+    }
+
+    auto findPointOnLaser = [&](int laserId, int xPeak, cv::Point& pointOut) {
+        const LaserData* best = nullptr;
+        int bestDx = std::numeric_limits<int>::max();
+
+        for (const auto& row : data) {
+            if (row.laser_id != laserId) continue;
+
+            int dx = std::abs(row.x_pixel - xPeak);
+            if (dx < bestDx) {
+                bestDx = dx;
+                best = &row;
+            }
+        }
+
+        if (best == nullptr) {
+            return false;
+        }
+
+        pointOut = cv::Point(best->x_pixel, best->y_pixel);
+        return pointOut.x >= 0 && pointOut.x < displayImage.cols &&
+               pointOut.y >= 0 && pointOut.y < displayImage.rows;
+    };
+
+    const cv::Scalar seamPointColor(0, 0, 0);
+    for (const auto& seamPair : results) {
+        cv::Point p1;
+        cv::Point p2;
+
+        if (findPointOnLaser(seamPair.s1.id, seamPair.s1.x_peak, p1)) {
+            cv::circle(displayImage, p1, 4, seamPointColor, -1, cv::LINE_AA);
+        }
+
+        if (findPointOnLaser(seamPair.s2.id, seamPair.s2.x_peak, p2)) {
+            cv::circle(displayImage, p2, 4, seamPointColor, -1, cv::LINE_AA);
+        }
+    }
+
+    return displayImage;
+}
+
+
 // 实时绘制类似 matplotlib 俯视散点图的激光重建视图。
 cv::Mat showLaserReconstructionView(const std::vector<LaserData>& data,
                                     const std::vector<LaserPlotTarget>& targets,
@@ -1116,6 +1213,7 @@ cv::Mat showLaserReconstructionView(const std::vector<LaserData>& data,
     }
 
     if (showWindow) cv::imshow(windowName, canvas);
+    
     return canvas;
 }
 
@@ -1162,20 +1260,23 @@ cv::Mat detectMain(cv::Mat originImage){
 
     // 画可能分瓣线像素点
     cv::Mat finalMat2 = drawUnetSeamProbabilityPoints(originImage, 0.97f, 1);
-    cv::imshow("finalMat2", finalMat2);
+    std::string filename  = getTimeString() + "_t" + ".jpg";
+    std::string save_path = vConfig.proc_path + filename;
+    cv::imwrite(save_path, finalMat2);
+    // cv::imshow("finalMat2", finalMat2);
 
     // 画出传统线
     cv::Mat finalMat1 = drawSeam2(originImage, results, smoothData);
-    cv::imshow("finalMat1", finalMat1);
+    // cv::imshow("finalMat1", finalMat1);
 
     // 实时查看 x_pixel-distance_cm 俯视重建图，并把当前稳定橘缝点标成红星。
-    std::vector<LaserPlotTarget> laserPlotTargets;
-    for (const auto& seam : results) {
-        laserPlotTargets.push_back(LaserPlotTarget(seam.s1.id, seam.s1.x_peak));
-        laserPlotTargets.push_back(LaserPlotTarget(seam.s2.id, seam.s2.x_peak));
-    }
-    showLaserReconstructionView(smoothData, laserPlotTargets, "Laser Reconstruction", true);
-    showLaserReconstructionView(seamSignalData, laserPlotTargets, "Laser Seam Signal", true);
+    // std::vector<LaserPlotTarget> laserPlotTargets;
+    // for (const auto& seam : results) {
+    //     laserPlotTargets.push_back(LaserPlotTarget(seam.s1.id, seam.s1.x_peak));
+    //     laserPlotTargets.push_back(LaserPlotTarget(seam.s2.id, seam.s2.x_peak));
+    // }
+    // showLaserReconstructionView(smoothData, laserPlotTargets, "Laser Reconstruction", true);
+    // showLaserReconstructionView(seamSignalData, laserPlotTargets, "Laser Seam Signal", true);
 
 
     // yolo找橘缝曲线

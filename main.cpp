@@ -223,7 +223,10 @@ int main(int argc, char *argv[]){
             for (const auto& file : filenames) {
                 cv::Mat frame = cv::imread(file);
                 if (frame.empty()) continue;
-                detectMain(frame);
+                cv::Mat finalMat = detectMain(frame);
+                std::string filename  = getTimeString() + "_displayImage" + ".jpg";
+                std::string save_path = vConfig.proc_path + filename;
+                cv::imwrite(save_path, finalMat);
                 sleep(1);
             }
         }
